@@ -1,0 +1,44 @@
+{
+  "name": "rtlfix",
+  "version": "1.0.0",
+  "description": "Persian, Arabic and Hebrew that read correctly in Claude Code, Qwen Code and other terminal programs, in terminals without RTL support such as VS Code's integrated terminal",
+  "type": "module",
+  "bin": {
+    "rtlfix": "src/cli.mjs"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "rtl",
+    "bidi",
+    "persian",
+    "farsi",
+    "arabic",
+    "hebrew",
+    "terminal",
+    "vscode",
+    "xterm.js",
+    "claude-code",
+    "qwen-code",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "Vahid Jebraeeli",
+  "license": "MIT",
+  "homepage": "https://github.com/VahidJbrl/rtlfix#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VahidJbrl/rtlfix.git"
+  },
+  "bugs": {
+    "url": "https://github.com/VahidJbrl/rtlfix/issues"
+  }
+}
