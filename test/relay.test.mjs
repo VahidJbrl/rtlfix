@@ -7,21 +7,35 @@ const ESC = '\x1b';
 const cup = (y, x) => `${ESC}[${y};${x}H`;
 const frame = (body) => `${ESC}[?2026h${ESC}[?25l${body}${ESC}[?25h${ESC}[?2026l`;
 const joined = (word) => [...preShapeArabic(word)].reverse().join('');
+const text = (row) => row.ch.filter((c) => c !== '').join('').trimEnd();
 
-function screen(bytes, cols, rows) {
-  const t = new Relay({ cols, rows });
-  t.push(Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes, 'utf8'));
-  return { row: (y) => t.scr[y - 1].ch.join('').trimEnd(), cursor: [t.y + 1, t.x + 1] };
+class Terminal extends Relay {
+  constructor(cols, rows, cursor) {
+    super({ cols, rows, cursor });
+    this.lines = [];
+  }
+
+  _scrollUp(top, bot, n, wrapped, feed) {
+    if (feed && top === 0 && this.scr === this.main) for (let k = 0; k < n; k++) this.lines.push(text(this.scr[k]));
+    return super._scrollUp(top, bot, n, wrapped, feed);
+  }
 }
 
-function relayed(chunks, cols, rows) {
-  const r = new Relay({ cols, rows });
-  return Buffer.concat(chunks.map((c) => r.push(Buffer.from(c, 'utf8'))));
+function screen(bytes, cols, rows, { pre = '', cursor } = {}) {
+  const t = new Terminal(cols, rows);
+  if (pre) t.push(Buffer.from(pre, 'utf8'));
+  t.push(Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes, 'utf8'));
+  return { row: (y) => text(t.scr[y - 1]), cursor: [t.y + 1, t.x + 1], history: t.lines, term: t };
+}
+
+function relayed(chunks, cols, rows, opts = {}) {
+  const r = new Relay({ cols, rows, ...opts });
+  return Buffer.concat(chunks.map((c) => r.push(Buffer.from(c, 'utf8'))).concat([r.tick()]));
 }
 
 test('output without RTL text passes through byte for byte', () => {
   const s = `${ESC}[?1049h${ESC}[2J${cup(1, 1)}${ESC}[1;32mhello${ESC}[0m world\r\n` +
-    `${ESC}]0;title${ESC}\\  ● done ${ESC}[38;2;1;2;3mok${ESC}[39m\r\n${cup(5, 3)}${ESC}[K`;
+    `${ESC}]0;title${ESC}\\  ● done ${ESC}[38;2;1;2;3mok${ESC}[39m\r\n${cup(5, 3)}${ESC}[K${'x'.repeat(95)}`;
   assert.equal(relayed([s], 40, 10).toString('utf8'), s);
   const r = new Relay({ cols: 40, rows: 10 });
   const out = Buffer.concat([...Buffer.from(s, 'utf8')].map((b) => r.push(Buffer.from([b]))));
@@ -30,39 +44,45 @@ test('output without RTL text passes through byte for byte', () => {
 
 test('an escape sequence split across reads is passed on once', () => {
   assert.equal(relayed([`${ESC}[3`, '1mab', 'cd', 'ef'], 20, 3).toString('utf8'), `${ESC}[31mabcdef`);
+  assert.equal(relayed([`ab${ESC}${ESC}[31mc`], 20, 3).toString('utf8'), `ab${ESC}${ESC}[31mc`);
 });
 
 test('typed Persian is joined, right-aligned, with the cursor left of the text', () => {
-  const chunks = [frame(`${cup(3, 1)}❯ ${cup(3, 3)}`)];
+  const chunks = [frame(`${cup(3, 1)}❯ ${cup(3, 3)}`)];
   [...'سلام'].forEach((ch, i) => chunks.push(frame(`${cup(3, 3 + i)}${ch}${cup(3, 4 + i)}`)));
   const t = screen(relayed(chunks, 30, 5), 30, 5);
-  const text = joined('سلام') + ' ❮';
-  assert.equal(t.row(3), ' '.repeat(29 - text.length) + text);
-  assert.deepEqual(t.cursor, [3, 29 - text.length]);
+  const line = joined('سلام') + ' ❮';
+  assert.equal(t.row(3), ' '.repeat(29 - line.length) + line);
+  assert.deepEqual(t.cursor, [3, 29 - line.length]);
 });
 
 test('an English word typed inside Persian stays whole and the cursor follows it', () => {
   const chunks = [frame(`${cup(2, 1)}* `)];
   [...'سلام hel'].forEach((ch, i) => chunks.push(frame(`${cup(2, 3 + i)}${ch}${cup(2, 4 + i)}`)));
   const t = screen(relayed(chunks, 30, 3), 30, 3);
-  const text = `hel ${joined('سلام')} *`;
-  assert.equal(t.row(2), ' '.repeat(29 - text.length) + text);
-  assert.deepEqual(t.cursor, [2, 29 - text.length + 4]);
+  const line = `hel ${joined('سلام')} *`;
+  assert.equal(t.row(2), ' '.repeat(29 - line.length) + line);
+  assert.deepEqual(t.cursor, [2, 29 - line.length + 4]);
 });
 
 test('a full-row redraw with a drawn cursor cell', () => {
   const row = `${ESC}[38;5;1m* ${ESC}[39mیک${ESC}[48;2;212;212;212m ${ESC}[49m​`;
   const out = relayed([frame(`${cup(4, 1)}${ESC}[2K${row}${cup(4, 5)}`)], 20, 6);
   const t = screen(out, 20, 6);
-  const text = ` ${joined('یک')} *`;
-  assert.equal(t.row(4), ' '.repeat(19 - text.length) + text);
-  assert.deepEqual(t.cursor, [4, 19 - text.length + 1]);
+  const line = ` ${joined('یک')} *`;
+  assert.equal(t.row(4), ' '.repeat(19 - line.length) + line);
+  assert.deepEqual(t.cursor, [4, 19 - line.length + 1]);
   assert.ok(!out.toString('utf8').includes('​'));
 });
 
 test('brackets in an RTL paragraph are mirrored', () => {
   const t = screen(relayed([`${cup(1, 1)}سلام (دنیا)`], 30, 2), 30, 2);
   assert.equal(t.row(1).trim(), `(${joined('دنیا')}) ${joined('سلام')}`);
+});
+
+test('a sentence that starts with a number is right-to-left', () => {
+  const t = screen(relayed([`${cup(1, 1)}● ۱. فایل تغییر کرد`], 30, 2), 30, 2);
+  assert.equal(t.row(1).trim(), `${joined('کرد')} ${joined('تغییر')} ${joined('فایل')} .۱ ●`);
 });
 
 test('an English sentence with a Persian word keeps its place', () => {
@@ -78,13 +98,16 @@ test('table columns stay put and Persian cells align right inside them', () => {
 test('a wrapped line continues the RTL paragraph above it', () => {
   const t = screen(relayed([`${cup(1, 1)}● سلام دنیا\r\n  server.py را ببین`], 40, 3), 40, 3);
   assert.equal(t.row(1).trim(), `${joined('دنیا')} ${joined('سلام')} ●`);
-  const text = `${joined('ببین')} ${joined('را')} server.py`;
-  assert.equal(t.row(2), ' '.repeat(37 - text.length) + text);
+  const line = `${joined('ببین')} ${joined('را')} server.py`;
+  assert.equal(t.row(2), ' '.repeat(37 - line.length) + line);
 });
 
-test('emoji keep their two cells', () => {
+test('emoji keep their two cells and RLM takes none', () => {
   const t = screen(relayed([`${cup(1, 1)}سلام 👋 دنیا`], 20, 2), 20, 2);
   assert.equal(t.row(1), ' '.repeat(20 - 1 - 11) + `${joined('دنیا')} 👋 ${joined('سلام')}`);
+  const r = screen(relayed([`${cup(1, 1)}ab‏cd${cup(2, 1)}x`], 20, 3), 20, 3);
+  assert.equal(r.row(1), 'ab‏cd');
+  assert.deepEqual(r.cursor, [2, 2]);
 });
 
 test('a row that stops containing RTL text shows the new text', () => {
@@ -92,21 +115,77 @@ test('a row that stops containing RTL text shows the new text', () => {
   assert.equal(screen(relayed([`${cup(2, 1)}سلام`, `${cup(2, 1)}abcd`], 20, 3), 20, 3).row(2), 'abcd');
 });
 
+test('Persian lines that scroll away in one read reach the scrollback drawn', () => {
+  let s = '';
+  for (let i = 1; i <= 8; i++) s += `سطر ${i}\r\n`;
+  const t = screen(relayed([s], 20, 4), 20, 4);
+  assert.equal(t.history.length, 5);
+  t.history.forEach((line, i) => assert.equal(line.trim(), `${i + 1} ${joined('سطر')}`));
+  assert.equal(t.row(1).trim(), `6 ${joined('سطر')}`);
+});
+
+test('the relay starts where the terminal cursor is', () => {
+  const pre = '$ ls\r\nfile1 file2\r\n$ rtlfix tui prog\r\n';
+  const prog = ['سلام دنیا', '\r\n> abc', `${ESC}[1A\r${ESC}[2Kخط اول`];
+  for (const cursor of [[3, 0], null]) {
+    const t = screen(relayed(prog, 30, 6, { cursor }), 30, 6, { pre });
+    assert.equal(t.row(3), '$ rtlfix tui prog');
+    assert.equal(t.row(4).trim(), `${joined('اول')} ${joined('خط')}`);
+    assert.equal(t.row(5), '> abc');
+  }
+});
+
 test('scrolling moves redrawn rows with the screen', () => {
   const t = screen(relayed([`${cup(1, 1)}سلام\r\nline2\r\nline3\r\n`, 'line4'], 10, 3), 10, 3);
   assert.deepEqual([t.row(1), t.row(2), t.row(3)], ['line2', 'line3', 'line4']);
 });
 
-test('the alternate screen keeps the main screen intact', () => {
+test('the alternate screen keeps the main screen and its saved cursor', () => {
   const t = screen(relayed([`${cup(1, 1)}سلام`, `${ESC}[?1049h${cup(1, 1)}alt${ESC}[?1049l`], 12, 2), 12, 2);
   assert.equal(t.row(1), ' '.repeat(12 - 1 - 3) + joined('سلام'));
+  const u = screen(relayed([`${cup(5, 4)}${ESC}[?1049h${cup(2, 2)}${ESC}7alt${ESC}[?1049lx`], 12, 6), 12, 6);
+  assert.equal(u.row(5), '   x');
 });
 
-test('resizing redraws RTL rows for the new width', () => {
+test('resizing follows the terminal', () => {
   const r = new Relay({ cols: 12, rows: 2 });
   const a = r.push(Buffer.from(`${cup(1, 1)}سلام`, 'utf8'));
   r.resize(20, 2);
   assert.equal(screen(Buffer.concat([a, r.tick()]), 20, 2).row(1), ' '.repeat(20 - 1 - 3) + joined('سلام'));
+  const h = new Relay({ cols: 10, rows: 5 });
+  h.push(Buffer.from('l1\r\nl2\r\nl3\r\nl4\r\nسلام', 'utf8'));
+  h.resize(10, 3);
+  assert.deepEqual([h.y, h.scr.map(text)[2].endsWith('سلام')], [2, true]);
+  assert.equal(text(h.scr[0]), 'l3');
+});
+
+test('line drawing, hyperlinks and other terminal state survive a redraw', () => {
+  const dec = relayed([`سلام config.py\r\n${ESC}(0lqqk`], 30, 3).toString('utf8');
+  assert.ok(dec.endsWith(`${ESC}(0`) || dec.lastIndexOf(`${ESC}(0`) > dec.lastIndexOf('config.py'));
+  const t = screen(Buffer.from(dec, 'utf8'), 30, 3);
+  assert.equal(t.row(1).trim(), `config.py ${joined('سلام')}`);
+  const link = `${ESC}]8;;https://example.com/${ESC}\\`;
+  const out = relayed([`سلام ${link}docs${ESC}]8;;${ESC}\\ را ببین\r\n${link}cl`, `ick${ESC}]8;;${ESC}\\`], 40, 3).toString('utf8');
+  assert.ok(out.includes(`${link}docs`));
+  const redraw = out.slice(out.indexOf('\x1b[?2026h'));
+  assert.ok(redraw.indexOf(`${ESC}]8;;${ESC}\\`) < redraw.indexOf('\x1b[1;1H'));
+});
+
+test('invalid UTF-8 is dropped the way xterm.js drops it', () => {
+  const out = new Relay({ cols: 20, rows: 2 }).push(Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x20, 0xff, 0x21]));
+  assert.equal(out.toString('utf8'), 'caf !');
+});
+
+test('a huge OSC string passes through untouched', () => {
+  const payload = 'A'.repeat(3 << 20);
+  const s = `${ESC}]1337;File=x:${payload}\x07سلام`;
+  const r = new Relay({ cols: 20, rows: 2 });
+  const bytes = Buffer.from(s, 'utf8');
+  const parts = [];
+  for (let i = 0; i < bytes.length; i += 65536) parts.push(r.push(bytes.subarray(i, i + 65536)));
+  const out = Buffer.concat(parts).toString('utf8');
+  assert.ok(out.startsWith(`${ESC}]1337;File=x:${payload}\x07`));
+  assert.equal(r.x, 4);
 });
 
 test('the same picture whatever the read size', () => {

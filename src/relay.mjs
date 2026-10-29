@@ -1,19 +1,41 @@
-import { StringDecoder } from 'node:string_decoder';
 import {
-  bidiClass, isRtlLetter, resolveLevels, visualOrder, mirrorOf,
-  L, R, AL, EN, AN, ES, ET, ON,
+  bidiClass, isRtlLetter, resolveLevels, visualOrder, mirrorOf, paragraphLevel,
+  L, R, AL, ET, ES, ON,
 } from './bidi.mjs';
 import { shapeCps } from './shaping.mjs';
 import { cpWidth } from './width.mjs';
+
+const DEC_SPECIAL = '◆▒␉␌␍␊°±␤␋┘┐┌└┼⎺⎻─⎼⎽├┤┴┬│≤≥π≠£·';
+const CHARSETS = {
+  0: (cp) => (cp >= 0x60 && cp <= 0x7e ? DEC_SPECIAL[cp - 0x60] : null),
+  A: (cp) => (cp === 0x23 ? '£' : null),
+};
+const charsetName = (cs) => Object.keys(CHARSETS).find((k) => CHARSETS[k] === cs) || 'B';
+
+function charsetRestore(relay, cs) {
+  const g = relay.g;
+  let s = `\x1b(${g[0]}`;
+  const gl = relay.gl;
+  if (gl !== 0) s += gl === 1 ? '\x0e' : gl === 2 ? '\x1bn' : '\x1bo';
+  if ((CHARSETS[g[gl]] || null) !== cs) {
+    const name = charsetName(cs);
+    s += `\x1b${'()*+'[gl]}${name}`;
+    g[gl] = name;
+  }
+  relay.cs = cs;
+  return s;
+}
 
 const isFormatChar = (cp) =>
   (cp >= 0x200b && cp <= 0x200f) || (cp >= 0x202a && cp <= 0x202e) ||
   (cp >= 0x2060 && cp <= 0x206f) || cp === 0xfeff || cp === 0x061c;
 
-const ATTRS = new Map();
+const isRtlText = (cp) => cp >= 0x0590 && cp !== 0x200f && cp !== 0x061c && isRtlLetter(cp);
+
+let ATTRS = new Map();
 const SGR_STEP = new Map();
 
-function makeAttr(st) {
+function makeAttr(st, link = null) {
   const parts = [];
   if (st.b) parts.push('1');
   if (st.d) parts.push('2');
@@ -27,15 +49,19 @@ function makeAttr(st) {
   if (st.fg) parts.push(st.fg);
   if (st.bg) parts.push(st.bg);
   if (st.uc) parts.push(st.uc);
-  const key = parts.join(';');
+  const sgr = parts.join(';');
+  const key = link ? `${sgr}\u0001${link}` : sgr;
   let a = ATTRS.get(key);
   if (!a) {
+    if (ATTRS.size > 50000) ATTRS = new Map([['', DEFAULT_ATTR]]);
     a = {
       key,
       st,
-      seq: key ? `\x1b[${key}m` : '',
+      seq: sgr ? `\x1b[${sgr}m` : '',
       visible: Boolean(st.bg || st.v),
       bce: null,
+      link,
+      plain: null,
     };
     ATTRS.set(key, a);
   }
@@ -47,6 +73,10 @@ export const DEFAULT_ATTR = makeAttr({});
 function bceOf(a) {
   if (!a.bce) a.bce = a.st.bg ? makeAttr({ bg: a.st.bg }) : DEFAULT_ATTR;
   return a.bce;
+}
+
+function withLink(a, link) {
+  return link ? makeAttr(a.st, link) : a;
 }
 
 function applySgr(attr, params) {
@@ -105,7 +135,7 @@ function applySgr(attr, params) {
 }
 
 class Row {
-  constructor(cols, attr = DEFAULT_ATTR) {
+  constructor(cols, attr = DEFAULT_ATTR, wrapped = false) {
     this.ch = new Array(cols).fill(' ');
     this.at = new Array(cols).fill(attr);
     this.rtl = false;
@@ -115,52 +145,182 @@ class Row {
     this.b0 = -1;
     this.cmap = null;
     this.cmapX = -1;
+    this.wrapped = wrapped;
+    this.tlen = 0;
   }
 
-  resize(cols) {
+  resize(cols, keep = false) {
     const n = this.ch.length;
     if (cols < n) {
+      if (keep) {
+        this.tailCh = this.ch.slice(cols).concat(this.tailCh || []);
+        this.tailAt = this.at.slice(cols).concat(this.tailAt || []);
+      } else {
+        this.tailCh = this.tailAt = null;
+        if (cols > 0 && this.ch[cols - 1] !== '' && cpWidth(this.ch[cols - 1].codePointAt(0)) === 2) this.ch[cols - 1] = ' ';
+      }
       this.ch.length = cols;
       this.at.length = cols;
-      if (cols > 0 && this.ch[cols - 1] !== '' && cpWidth(this.ch[cols - 1].codePointAt(0)) === 2) {
-        this.ch[cols - 1] = ' ';
-      }
     } else {
-      for (let x = n; x < cols; x++) { this.ch.push(' '); this.at.push(DEFAULT_ATTR); }
+      for (let x = n; x < cols; x++) {
+        if (this.tailCh && this.tailCh.length) {
+          this.ch.push(this.tailCh.shift());
+          this.at.push(this.tailAt.shift());
+        } else {
+          this.ch.push(' ');
+          this.at.push(DEFAULT_ATTR);
+        }
+      }
     }
+    this.tlen = Math.min(this.tlen, cols);
     this.cmap = null;
   }
 }
 
-const blankRows = (rows, cols) => Array.from({ length: rows }, () => new Row(cols));
+const blankRows = (rows, cols, attr) => Array.from({ length: rows }, () => new Row(cols, attr));
+const held = (row) => row.rtl || row.shown;
+
+function defaultTabs(cols) {
+  const tabs = new Set();
+  for (let i = 0; i < cols; i += 8) tabs.add(i);
+  return tabs;
+}
+
+function growTabs(tabs, cols) {
+  let i = cols;
+  if (!tabs.has(i)) {
+    do i--; while (i > 0 && !tabs.has(i));
+    i = Math.max(0, Math.min(i, cols - 1));
+  }
+  for (; i < cols; i += 8) tabs.add(i);
+  return tabs;
+}
 
 const cup = (y, x) => `\x1b[${y + 1};${x + 1}H`;
+
+const FATAL = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+export class Utf8Decoder {
+  constructor() {
+    this.part = null;
+  }
+
+  write(buf) {
+    let bytes = buf;
+    if (this.part) {
+      bytes = Buffer.concat([this.part, buf]);
+      this.part = null;
+    }
+    const n = bytes.length;
+    let end = n;
+    for (let k = 1; k <= 3 && k <= n; k++) {
+      const b = bytes[n - k];
+      if ((b & 0xc0) === 0x80) continue;
+      const need = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+      if (need > k) end = n - k;
+      break;
+    }
+    let s;
+    try {
+      s = FATAL.decode(bytes.subarray(0, end));
+      if (end < n) this.part = Buffer.from(bytes.subarray(end));
+    } catch {
+      s = this._slow(bytes);
+    }
+    return s.includes('\ufeff') ? s.replaceAll('\ufeff', '') : s;
+  }
+
+  _slow(bytes) {
+    const n = bytes.length;
+    const out = [];
+    let s = '';
+    const push = (cp) => {
+      out.push(cp);
+      if (out.length >= 4096) { s += String.fromCodePoint(...out); out.length = 0; }
+    };
+    const cont = (b) => (b & 0xc0) === 0x80;
+    let i = 0;
+    while (i < n) {
+      const start = i;
+      const b1 = bytes[i++];
+      if (b1 < 0x80) { push(b1); continue; }
+      const need = (b1 & 0xe0) === 0xc0 ? 2 : (b1 & 0xf0) === 0xe0 ? 3 : (b1 & 0xf8) === 0xf0 ? 4 : 0;
+      if (!need) continue;
+      let cp = b1 & (need === 2 ? 0x1f : need === 3 ? 0x0f : 0x07);
+      let bad = false;
+      for (let k = 1; k < need; k++) {
+        if (i >= n) { this.part = Buffer.from(bytes.subarray(start)); return s + String.fromCodePoint(...out); }
+        const b = bytes[i++];
+        if (!cont(b)) { i--; bad = true; break; }
+        cp = (cp << 6) | (b & 0x3f);
+      }
+      if (bad) continue;
+      if (need === 2 && cp < 0x80) { i--; continue; }
+      if (need === 3 && (cp < 0x800 || (cp >= 0xd800 && cp <= 0xdfff) || cp === 0xfeff)) continue;
+      if (need === 4 && (cp < 0x10000 || cp > 0x10ffff)) continue;
+      push(cp);
+    }
+    return s + String.fromCodePoint(...out);
+  }
+}
 
 const PASS = true;
 const DROP = false;
 
 export class Relay {
-  constructor({ cols = 80, rows = 24 } = {}) {
+  constructor({ cols = 80, rows = 24, cursor } = {}) {
     this.cols = cols;
     this.rows = rows;
-    this.decoder = new StringDecoder('utf8');
+    this.decoder = new Utf8Decoder();
     this.pend = '';
     this.main = blankRows(rows, cols);
-    this.alt = blankRows(rows, cols);
+    this.alt = null;
     this.scr = this.main;
+    this.saved = { main: null, alt: null };
     this.x = 0;
     this.y = 0;
+    this.lost = false;
+    this.mainLost = false;
+    if (cursor === null) {
+      this.lost = true;
+    } else if (Array.isArray(cursor)) {
+      this.y = Math.max(0, Math.min(rows - 1, cursor[0] | 0));
+      this.x = Math.max(0, Math.min(cols - 1, cursor[1] | 0));
+    }
+    this.ty = this.y;
+    this.mainY = this.y;
     this.wrap = false;
+    this.tw = false;
     this.autowrap = true;
+    this.origin = false;
+    this.insert = false;
     this.top = 0;
     this.bot = rows - 1;
     this.attr = DEFAULT_ATTR;
-    this.saved = null;
+    this.link = null;
+    this.cell = DEFAULT_ATTR;
+    this.g = ['B', 'B', 'B', 'B'];
+    this.gl = 0;
+    this.cs = null;
+    this.tabs = defaultTabs(cols);
     this.frame = false;
     this.dirty = false;
     this.desync = false;
-    this.lastCh = ' ';
+    this.join = 0;
+    this.tjoin = false;
+    this.lastRow = null;
+    this.lastX = 0;
     this.inj = '';
+    this.str = null;
+    this.sb = Infinity;
+    this.gone = null;
+    this.drawing = false;
+    this.parked = -1;
+    this.margins = null;
+    this.mainTabs = null;
+    this.over = false;
+    this.run = false;
+    this.history = [];
   }
 
   push(buf) {
@@ -168,53 +328,143 @@ export class Relay {
     this.pend = '';
     const out = [];
     this._parse(s, out);
-    if (!this.frame) out.push(this._flush());
+    if (!this.frame && !this.str) {
+      const f = this._flush();
+      if (f) { out.push(f); this.tjoin = false; }
+    }
     return Buffer.from(out.join(''), 'utf8');
   }
 
   tick() {
-    return Buffer.from(this._flush(), 'utf8');
+    const f = this.str ? '' : this._flush();
+    if (f) this.tjoin = false;
+    return Buffer.from(f, 'utf8');
   }
 
   resize(cols, rows) {
     if (!(cols > 0 && rows > 0) || (cols === this.cols && rows === this.rows)) return;
-    for (const buf of [this.main, this.alt]) {
-      while (buf.length > rows) buf.pop();
-      while (buf.length < rows) buf.push(new Row(this.cols));
-      for (const row of buf) {
-        row.resize(cols);
-        if (row.rtl || row.shown) { row.dirty = true; this.dirty = true; }
+    const onAlt = this.scr !== this.main;
+    const px = this.wrap ? this.cols : this.x;
+    if (rows !== this.rows) {
+      this.unsure = false;
+      const m = this._resizeRows(this.main, onAlt ? this.mainY : this.y, rows, true, this.saved.main);
+      if (this.unsure) { if (onAlt) this.mainLost = true; else this.lost = true; }
+      if (onAlt) this.mainY = m; else this.y = m;
+      if (this.alt) this.y = this._resizeRows(this.alt, this.y, rows, false, this.saved.alt);
+    }
+    if (cols !== this.cols) {
+      const reflow = this.main.some((r) => r.wrapped || r.tlen > cols);
+      for (const row of this.main) row.resize(cols);
+      if (this.alt) for (const row of this.alt) row.resize(cols, true);
+
+      if (reflow) {
+        for (const row of this.main) Object.assign(row, { rtl: false, shown: false, dirty: false, cmap: null, wrapped: false });
+        this.history = [];
+        this.sb = Infinity;
+        if (onAlt) this.mainLost = true; else this.lost = true;
       }
     }
     this.cols = cols;
     this.rows = rows;
+    growTabs(this.tabs, cols);
+    if (this.mainTabs) growTabs(this.mainTabs, cols);
+    for (const s of [this.saved.main, this.saved.alt]) if (s) s.x = Math.min(s.x, cols - 1);
+    for (const buf of [this.main, this.alt]) {
+      if (!buf) continue;
+      for (const row of buf) if (held(row)) { row.dirty = true; this.dirty = true; }
+    }
     this.top = 0;
     this.bot = rows - 1;
-    this.x = Math.min(this.x, cols - 1);
+    this.x = Math.min(px, cols - 1);
     this.y = Math.min(this.y, rows - 1);
+    this.mainY = Math.min(this.mainY, rows - 1);
     this.wrap = false;
+    this.over = false;
+    this.run = false;
+    this.tw = false;
     this.desync = true;
+    this.ty = this.y;
+  }
+
+  _resizeRows(buf, y, rows, isMain, saved) {
+    while (buf.length < rows) {
+      if (isMain && this.sb > 0 && y === buf.length - 1 && this.history.length) {
+        const back = this.history.pop();
+        back.resize(this.cols);
+        buf.unshift(back);
+        y++;
+        this.sb--;
+        if (saved) saved.y += 1;
+      } else {
+        if (isMain && this.sb > 0 && y === buf.length - 1) this.unsure = true;
+        buf.push(new Row(this.cols));
+      }
+    }
+    while (buf.length > rows) {
+      if (y < buf.length - 1) {
+        buf.pop();
+      } else {
+        const gone = buf.shift();
+        y--;
+        if (isMain) this._keep(gone);
+        if (isMain && this.sb !== Infinity) this.sb++;
+        if (saved) saved.y -= 1;
+      }
+    }
+    return Math.max(0, Math.min(rows - 1, y));
   }
 
   _parse(s, out) {
     const n = s.length;
     let keep = 0;
     let i = 0;
+    if (this.str) {
+      i = this._strScan(s, 0);
+      if (this.str) {
+        if (this.pend) {
+          out.push(s.slice(0, n - this.pend.length));
+          return;
+        }
+        out.push(s);
+        return;
+      }
+    }
     while (i < n) {
       const c = s.charCodeAt(i);
       let len = 1;
       let pass = PASS;
-      if (c === 0x1b) {
-        const end = seqEnd(s, i);
-        if (end < 0) {
+      const c1 = c >= 0x80 && c < 0xa0;
+      if (c === 0x1b || (c1 && C1_INTRO.has(c))) {
+        const kind = c === 0x1b ? s[i + 1] : String.fromCharCode(c - 0x40);
+        if (kind === undefined) {
           if (i > keep) out.push(s.slice(keep, i));
           this.pend = s.slice(i);
           return;
         }
-        len = end - i;
-        pass = this._escape(s.slice(i, end));
-      } else if (c < 0x20 || c === 0x7f || (c >= 0x80 && c < 0xa0)) {
-        this._control(c);
+        if (kind === ']' || kind === 'P' || kind === '_' || kind === '^' || kind === 'X') {
+          this.join = 0;
+          this.run = false;
+          this.str = { kind, buf: kind === ']' ? '' : null };
+          const j = this._strScan(s, i + (c === 0x1b ? 2 : 1));
+          if (this.str) {
+            const upto = this.pend ? n - this.pend.length : n;
+            if (upto > keep) out.push(s.slice(keep, upto));
+            return;
+          }
+          len = j - i;
+        } else {
+          const end = c === 0x1b ? seqEnd(s, i) : csiEnd(s, i, i + 1);
+          if (end < 0) {
+            if (i > keep) out.push(s.slice(keep, i));
+            this.pend = s.slice(i);
+            return;
+          }
+          len = end - i;
+          const seq = c === 0x1b ? s.slice(i, end) : `\x1b${kind}${s.slice(i + 1, end)}`;
+          pass = this._escape(seq);
+        }
+      } else if (c < 0x20 || c === 0x7f || c1) {
+        if (this._control(c) === DROP) pass = DROP;
       } else {
         let cp = c;
         if (c >= 0xd800 && c <= 0xdbff && i + 1 < n) {
@@ -232,74 +482,248 @@ export class Relay {
       if (pass === DROP) {
         if (i > keep) out.push(s.slice(keep, i));
         keep = i + len;
+      } else {
+        this.parked = -1;
       }
       i += len;
     }
     if (n > keep) out.push(s.slice(keep));
   }
 
+  _strScan(s, from) {
+    const n = s.length;
+    const st = this.str;
+    for (let j = from; j < n; j++) {
+      const c = s.charCodeAt(j);
+      let end = -1;
+      let next = -1;
+      if (c === 0x07 && st.kind === ']') { end = j; next = j + 1; }
+      else if (c === 0x9c) { end = j; next = j + 1; }
+      else if (c === 0x18 || c === 0x1a) { end = j; next = j + 1; st.buf = null; }
+      else if (c === 0x1b) {
+        if (j + 1 >= n) {
+          this._strKeep(s, from, j);
+          this.pend = '\x1b';
+          return n;
+        }
+        end = j;
+        next = s[j + 1] === '\\' ? j + 2 : j;
+      }
+      if (end >= 0) {
+        this._strKeep(s, from, end);
+        this.str = null;
+        if (st.buf !== null && st.kind === ']') this._osc(st.buf);
+        return next;
+      }
+    }
+    this._strKeep(s, from, n);
+    return n;
+  }
+
+  _strKeep(s, a, b) {
+    const st = this.str;
+    if (st.buf === null) return;
+    if (st.buf.length + (b - a) > 8192) st.buf = null;
+    else st.buf += s.slice(a, b);
+  }
+
+  _osc(body) {
+    if (!body.startsWith('8;')) return;
+    const k = body.indexOf(';', 2);
+    if (k < 0) return;
+    const uri = body.slice(k + 1);
+    this.link = uri ? `${body.slice(2, k)};${uri}` : null;
+    this.cell = withLink(this.attr, this.link);
+  }
+
+  _goto(y, x) {
+    let s;
+    if (this.lost) {
+      const dy = y - this.ty;
+      s = (dy < 0 ? `\x1b[${-dy}A` : dy > 0 ? `\x1b[${dy}B` : '') + `\x1b[${x + 1}G`;
+    } else if (this.origin && !this.drawing) {
+      s = cup(Math.max(0, y - this.top), x);
+    } else {
+      s = cup(y, x);
+    }
+    this.ty = y;
+    return s;
+  }
+
   _sync() {
     if (this.desync) {
-      this.inj += cup(this.y, this.x);
+      this.inj += this._place(this.x);
       this.desync = false;
     }
+  }
+
+  _place(cx) {
+    const row = this.scr[this.y];
+    if (!(this.wrap && cx === this.x && !held(row))) {
+      this.tw = false;
+      return this._goto(this.y, cx);
+    }
+    const cols = this.cols;
+    let x = cols - 1;
+    if (row.ch[x] === '' && x > 0) {
+      x--;
+    } else if (x > 0 && row.ch[x - 1] !== '' && row.ch[x - 1] !== ' ' && row.at[x - 1] === row.at[x] &&
+      cpWidth(row.ch[x - 1].codePointAt(0)) === 2) {
+      x--;
+    }
+    const a = row.at[x];
+    let pre = '';
+    let post = '';
+    if (this.insert) { pre += '\x1b[4l'; post += '\x1b[4h'; }
+    if (this.cs) {
+      pre += '\x1b(B\x0f';
+      post += charsetRestore(this, this.cs);
+    }
+    if (a.link !== this.link) {
+      pre += `\x1b]8;${a.link || ';'}\x1b\\`;
+      post += `\x1b]8;${this.link || ';'}\x1b\\`;
+    }
+    let s = this._goto(this.y, x) + pre + '\x1b[0m' + a.seq;
+    for (let k = x; k < cols; k++) {
+      const c = row.ch[k];
+      if (c !== '') s += c;
+    }
+    s += post + '\x1b[0m' + this.attr.seq;
+    if (this.over) s += '\u200b';
+    this.tw = true;
+    return s;
+  }
+
+  _open() {
+    this.drawing = true;
+    let s = this.frame ? '' : '\x1b[?2026h';
+    if (this.insert) s += '\x1b[4l';
+    if (this.origin && !this.lost) s += '\x1b[?6l';
+    if (this.link) s += '\x1b]8;;\x1b\\';
+    if (this.cs) s += this.gl !== 0 ? '\x1b(B\x0f' : '\x1b(B';
+    return s;
+  }
+
+  _close() {
+    this.drawing = false;
+    let s = '\x1b[0m' + this.attr.seq;
+    if (this.cs) s += charsetRestore(this, this.cs);
+    if (this.link) s += `\x1b]8;${this.link}\x1b\\`;
+    if (this.origin && !this.lost) { s += '\x1b[?6h'; this.ty = this.top; }
+    if (this.insert) s += '\x1b[4h';
+    return s;
   }
 
   _print(cp, ch) {
-    const w = cpWidth(cp);
-    const cols = this.cols;
-    if (w === 0) {
-      let px = this.wrap ? this.x : this.x - 1;
-      const row = this.scr[this.y];
-      if (px > 0 && row.ch[px] === '') px -= 1;
-      if (px < 0) return PASS;
-      row.ch[px] += ch;
-      if (row.rtl || row.shown) { this._touch(row); return DROP; }
-      this._sync();
-      return PASS;
+    if (cp < 0x7f && this.cs) {
+      const m = this.cs(cp);
+      if (m) { ch = m; cp = m.codePointAt(0); }
     }
+    const w0 = cpWidth(cp);
+    let w = w0;
+    const cols = this.cols;
+    let row = this.scr[this.y];
+    if (w === 0) {
+      if (this.join > 0) {
+        let px = this.wrap ? this.x : this.x - 1;
+        if (px > 0 && row.ch[px] === '') px -= 1;
+        if (px < 0) return PASS;
+        row.ch[px] += ch;
+        if (held(row) || !this.tjoin || this.desync) { this._touch(row); return DROP; }
+        return PASS;
+      }
+      if (this.wrap && !this.over) {
+        this.over = true;
+        if (!this.desync && !held(row)) return PASS;
+        this.desync = true;
+        return DROP;
+      }
+      w = 1;
+    }
+    const joinWidth = w0 === 0 ? 0 : w;
     if (this.wrap || (w === 2 && this.x === cols - 1)) {
       if (this.autowrap) {
-        this.inj += (this.desync ? cup(this.y, this.x) : '') + '\r\n';
-        this.desync = false;
+        if (w === 2 && !this.wrap) {
+          if (row.ch[cols - 1] === '' && cols > 1) row.ch[cols - 2] = ' ';
+          row.ch[cols - 1] = ' ';
+          row.at[cols - 1] = this.cell;
+          if (held(row)) this._touch(row);
+        }
+        const next = this.y === this.bot ? null : this.scr[Math.min(this.y + 1, this.rows - 1)];
+        const native = this.tw && !this.desync && !held(row) && !(next && held(next)) && !isRtlText(cp) &&
+          !(this.y === this.bot && this.top === 0 && this.scr === this.main && this._needsDraw(this.scr[0]));
+        if (!native) {
+          if (this.desync) this.inj += this._goto(this.y, this.x);
+          if (w === 2 && !this.wrap) this.inj += '\x1b[K';
+          this._lineFeed(false);
+          this.inj += '\r\n';
+          this.ty = this.y;
+        } else {
+          this._lineFeed(true);
+          this.ty = this.y;
+        }
         this.x = 0;
-        this._index();
+        this.desync = false;
+        this.tw = false;
+        row = this.scr[this.y];
       } else if (w === 2) {
-        return PASS;
+        this.wrap = false;
+        this.x = cols - 1;
+        if (!this.desync && !held(row)) return PASS;
+        this.desync = true;
+        return DROP;
+      } else {
+        this.run = true;
       }
       this.wrap = false;
     }
-    const row = this.scr[this.y];
+    this.over = false;
     const x = this.x;
-    this._put(row, x, ch, w);
-    this.lastCh = ch;
-    if (!row.rtl && cp >= 0x590 && isRtlLetter(cp)) row.rtl = true;
+    this._put(row, x, ch, w, w0 === 0 ? 0 : w);
+    this.run = true;
+    this.join = joinWidth;
+    this.lastRow = row;
+    this.lastX = x;
+    if (!row.rtl && isRtlText(cp)) row.rtl = true;
     this.x += w;
     if (this.x >= cols) { this.x = cols - 1; this.wrap = true; }
-    if (row.rtl || row.shown) {
+    if (held(row)) {
       this._touch(row);
       this.desync = true;
+      this.tw = false;
+      this.tjoin = false;
       return DROP;
     }
     if (this.desync) {
-      this.inj += cup(this.y, x);
+      this.inj += this._goto(this.y, x);
       this.desync = false;
     }
+    this.tw = this.wrap;
+    this.tjoin = true;
     return PASS;
   }
 
-  _put(row, x, ch, w) {
+  _put(row, x, ch, w, iw = w) {
     const cols = this.cols;
-    if (row.ch[x] === '' && x > 0) row.ch[x - 1] = ' ';
+    if (row.ch[x] === '' && x > 0 && (!this.run || (this.insert && iw))) row.ch[x - 1] = ' ';
+    if (this.insert && iw) {
+      row.ch.splice(x, 0, ...new Array(iw).fill(' '));
+      row.at.splice(x, 0, ...new Array(iw).fill(this.cell));
+      row.ch.length = cols;
+      row.at.length = cols;
+      if (row.ch[cols - 1] !== '' && cols > 1 && row.ch[cols - 1] !== ' ' && cpWidth(row.ch[cols - 1].codePointAt(0)) === 2) row.ch[cols - 1] = ' ';
+      row.tlen = Math.min(cols, row.tlen + iw);
+    }
     if (w === 2) {
       if (x + 2 < cols && row.ch[x + 2] === '') row.ch[x + 2] = ' ';
       row.ch[x + 1] = '';
-      row.at[x + 1] = this.attr;
+      row.at[x + 1] = this.cell;
     } else if (x + 1 < cols && row.ch[x + 1] === '') {
       row.ch[x + 1] = ' ';
     }
     row.ch[x] = ch;
-    row.at[x] = this.attr;
+    row.at[x] = this.cell;
+    if (x + w > row.tlen) row.tlen = x + w;
   }
 
   _touch(row) {
@@ -307,155 +731,341 @@ export class Relay {
     this.dirty = true;
   }
 
-  _erase(row, a, b) {
+  _needsDraw(row) {
+    return row.dirty && held(row);
+  }
+
+  _erase(row, a, b, reset = false) {
     const blank = bceOf(this.attr);
-    if (a <= 0 && b >= this.cols) {
+    const cols = this.cols;
+    if (reset) row.tailCh = row.tailAt = null;
+    if (a <= 0 && b >= cols) {
       row.ch.fill(' ');
       row.at.fill(blank);
       row.rtl = false;
       row.shown = false;
       row.dirty = false;
       row.cmap = null;
+      row.tlen = 0;
+      row.wrapped = false;
       return;
     }
+    a = Math.max(0, a);
+    b = Math.min(b, cols);
     if (a > 0 && row.ch[a] === '') row.ch[a - 1] = ' ';
-    if (b < this.cols && row.ch[b] === '') row.ch[b] = ' ';
-    for (let x = Math.max(0, a); x < Math.min(b, this.cols); x++) {
+    if (b < cols && (row.ch[b] === '' || (b > 0 && row.ch[b - 1] !== '' && cpWidth(row.ch[b - 1].codePointAt(0)) === 2))) row.ch[b] = ' ';
+    for (let x = a; x < b; x++) {
       row.ch[x] = ' ';
       row.at[x] = blank;
     }
-    if (row.rtl || row.shown) this._touch(row);
+    if (b >= row.tlen) row.tlen = Math.min(row.tlen, a);
+    if (held(row)) this._touch(row);
   }
 
-  _index() {
-    if (this.y === this.bot) this._scrollUp(this.top, this.bot, 1);
-    else if (this.y < this.rows - 1) this.y += 1;
+  _lineFeed(wrapped) {
+    if (this.y === this.bot) {
+      this._scrollUp(this.top, this.bot, 1, wrapped, true);
+    } else if (this.y < this.rows - 1) {
+      this.y += 1;
+      this.scr[this.y].wrapped = wrapped;
+    }
   }
 
-  _scrollUp(top, bot, n) {
+  _keep(row) {
+    this.history.push(row);
+    if (this.history.length > 1000) this.history.shift();
+  }
+
+  _savedSlot() {
+    return this.scr === this.main ? 'main' : 'alt';
+  }
+
+  _scrollUp(top, bot, n, wrapped = false, feed = false) {
     n = Math.min(n, bot - top + 1);
     const blank = bceOf(this.attr);
+    if (feed && top === 0) {
+      for (let k = 0; k < n; k++) {
+        const row = this.scr[k];
+        if (this.scr === this.main) {
+          if (this._needsDraw(row)) {
+            this.inj += this._open() + this._drawRow(row, k, this.gone) + this._close() + this._goto(this.y, this.x) + (this.frame ? '' : '\x1b[?2026l');
+            this.tw = false;
+            this.desync = false;
+          }
+          this.gone = row;
+          this._keep(row);
+          if (this.sb !== Infinity) this.sb++;
+        }
+        const sv = this.saved.main;
+        if (sv && this.scr === this.main) sv.y -= 1;
+      }
+    }
     this.scr.splice(top, n);
-    for (let k = 0; k < n; k++) this.scr.splice(bot - n + 1 + k, 0, new Row(this.cols, blank));
+    for (let k = 0; k < n; k++) this.scr.splice(bot - n + 1 + k, 0, new Row(this.cols, blank, wrapped));
   }
 
-  _scrollDown(top, bot, n) {
+  _scrollDown(top, bot, n, attr) {
     n = Math.min(n, bot - top + 1);
-    const blank = bceOf(this.attr);
     this.scr.splice(bot - n + 1, n);
-    for (let k = 0; k < n; k++) this.scr.splice(top, 0, new Row(this.cols, blank));
+    for (let k = 0; k < n; k++) this.scr.splice(top, 0, new Row(this.cols, attr));
   }
 
   _control(c) {
+    this.join = 0;
+    this.run = false;
     switch (c) {
       case 0x08:
         this._sync();
-        if (this.x > 0) this.x -= 1;
+        this.over = false;
+        if (this.x > 0 && !this.wrap) this.x -= 1;
+        else if (this.wrap) this.x = Math.max(0, this.cols - 2);
         this.wrap = false;
         break;
       case 0x09:
+        if (this.wrap) return DROP;
         this._sync();
-        this.x = Math.min(this.cols - 1, (Math.floor(this.x / 8) + 1) * 8);
-        this.wrap = false;
+        this.x = this._nextTab(this.x);
         break;
-      case 0x0a: case 0x0b: case 0x0c:
+      case 0x0a: case 0x0b: case 0x0c: {
+        const over = this.over;
         this._sync();
-        this._index();
-        this.wrap = false;
+        this._lineFeed(false);
+        this.wrap = over;
+        this.over = false;
+        this.tw = over;
+        this.ty = this.y;
         break;
+      }
       case 0x0d:
         this._sync();
+        this.over = false;
         this.x = 0;
         this.wrap = false;
+        this.tw = false;
+        break;
+      case 0x0e:
+        this._setGl(1);
+        break;
+      case 0x0f:
+        this._setGl(0);
+        break;
+      case 0x84:
+        this._escape('\x1bD');
+        break;
+      case 0x85:
+        this._escape('\x1bE');
+        break;
+      case 0x88:
+        this._escape('\x1bH');
+        break;
+      case 0x8d:
+        this._escape('\x1bM');
         break;
       default:
         break;
     }
   }
 
+  _nextTab(x) {
+    for (x++; x < this.cols && !this.tabs.has(x); x++);
+    return Math.min(x, this.cols - 1);
+  }
+
+  _prevTab(x) {
+    for (x--; x > 0 && !this.tabs.has(x); x--);
+    return Math.max(0, x);
+  }
+
+  _setGl(n) {
+    this.gl = n;
+    this.cs = CHARSETS[this.g[n]] || null;
+  }
+
+  _saveCursor() {
+    this.saved[this._savedSlot()] = { x: this.x, y: this.y, attr: this.attr, cs: this.cs };
+  }
+
+  _restoreCursor() {
+    const s = this.saved[this._savedSlot()];
+    if (s) {
+      this.x = Math.min(s.x, this.cols - 1);
+      this.y = Math.max(0, Math.min(s.y, this.rows - 1));
+      this.attr = s.attr;
+      this.cs = s.cs;
+    } else {
+      this.x = 0;
+      this.y = 0;
+      this.attr = DEFAULT_ATTR;
+      this.cs = null;
+    }
+    if (this.origin) this.y = Math.max(this.top, Math.min(this.bot, this.y));
+    this.cell = withLink(this.attr, this.link);
+    this.wrap = false;
+    this.over = false;
+    this.tw = false;
+    this.desync = false;
+    this.ty = this.y;
+  }
+
+  _home() {
+    this.over = false;
+    this.x = 0;
+    this.y = this.origin ? this.top : 0;
+    this.wrap = false;
+    this.tw = false;
+    this.desync = false;
+    this._absolute();
+  }
+
+  _absolute() {
+    if (this.lost && this.scr === this.main) this.mainLost = false;
+    this.lost = false;
+    this.ty = this.y;
+  }
+
   _escape(seq) {
+    const join = this.join;
+    this.join = 0;
+    this.run = false;
     const c1 = seq[1];
-    if (c1 === '[') return this._csi(seq);
-    if (c1 === ']' || c1 === 'P' || c1 === '_' || c1 === '^' || c1 === 'X') return PASS;
+    if (c1 === '[') return this._csi(seq, join);
     switch (c1) {
       case '7':
-        this.saved = { x: this.x, y: this.y, attr: this.attr, wrap: this.wrap };
         this._sync();
+        this._saveCursor();
         return PASS;
       case '8':
         this._restoreCursor();
         return PASS;
       case 'D':
         this._sync();
-        this._index();
+        this.over = false;
+        this._lineFeed(false);
         this.wrap = false;
+        this.tw = false;
+        this.ty = this.y;
         return PASS;
       case 'E':
         this._sync();
+        this.over = false;
         this.x = 0;
-        this._index();
+        this._lineFeed(false);
         this.wrap = false;
+        this.tw = false;
+        this.ty = this.y;
         return PASS;
       case 'M':
         this._sync();
-        if (this.y === this.top) this._scrollDown(this.top, this.bot, 1);
+        this.over = false;
+        if (this.y === this.top) this._scrollDown(this.top, this.bot, 1, bceOf(this.attr));
         else if (this.y > 0) this.y -= 1;
         this.wrap = false;
+        this.tw = false;
+        this.ty = this.y;
+        return PASS;
+      case 'H':
+        this._sync();
+        if (!this.wrap) this.tabs.add(this.x);
         return PASS;
       case 'c':
         this._reset();
+        return PASS;
+      case 'n':
+        this._setGl(2);
+        return PASS;
+      case 'o':
+        this._setGl(3);
+        return PASS;
+      case '(': case ')': case '*': case '+': case '-': case '.': case '/': {
+        const slot = { '(': 0, ')': 1, '*': 2, '+': 3, '-': 1, '.': 2, '/': 3 }[c1];
+        this.g[slot] = seq[2];
+        if (slot === this.gl) this.cs = CHARSETS[seq[2]] || null;
+        return PASS;
+      }
+      case '#':
+        if (seq[2] === '8') {
+          const e = this.cell;
+          for (const row of this.scr) {
+            row.tailCh = row.tailAt = null;
+            row.ch.fill('E');
+            row.at.fill(e);
+            row.rtl = false;
+            row.dirty = false;
+            row.shown = false;
+            row.cmap = null;
+            row.tlen = this.cols;
+            row.wrapped = false;
+          }
+          this._home();
+        }
         return PASS;
       default:
         return PASS;
     }
   }
 
-  _restoreCursor() {
-    const s = this.saved;
-    if (s) {
-      this.x = Math.min(s.x, this.cols - 1);
-      this.y = Math.min(s.y, this.rows - 1);
-      this.attr = s.attr;
-      this.wrap = s.wrap;
-    } else {
-      this.x = 0;
-      this.y = 0;
-      this.attr = DEFAULT_ATTR;
-      this.wrap = false;
-    }
-    this.desync = false;
-  }
-
   _reset() {
     this.main = blankRows(this.rows, this.cols);
-    this.alt = blankRows(this.rows, this.cols);
+    this.alt = null;
     this.scr = this.main;
+    this.saved = { main: null, alt: null };
     this.x = 0;
     this.y = 0;
     this.wrap = false;
+    this.tw = false;
     this.autowrap = true;
+    this.origin = false;
+    this.insert = false;
     this.top = 0;
     this.bot = this.rows - 1;
     this.attr = DEFAULT_ATTR;
-    this.saved = null;
+    this.link = null;
+    this.cell = DEFAULT_ATTR;
+    this.g = ['B', 'B', 'B', 'B'];
+    this._setGl(0);
+    this.tabs = defaultTabs(this.cols);
     this.frame = false;
     this.dirty = false;
     this.desync = false;
+    this.sb = 0;
+    this.history = [];
+    this.mainLost = false;
+    this._absolute();
   }
 
-  _csi(seq) {
+  _softReset() {
+    this.top = 0;
+    this.bot = this.rows - 1;
+    this.attr = DEFAULT_ATTR;
+    this.cell = withLink(this.attr, this.link);
+    this.autowrap = true;
+    this.origin = false;
+    this.insert = false;
+    this.g = ['B', 'B', 'B', 'B'];
+    this._setGl(0);
+    this.saved[this._savedSlot()] = { x: 0, y: 0, attr: DEFAULT_ATTR, cs: null };
+  }
+
+  _csi(seq, join = 0) {
     const final = seq[seq.length - 1];
     let body = seq.slice(2, -1);
     let priv = '';
     if (body && '<=>?'.includes(body[0])) { priv = body[0]; body = body.slice(1); }
-    if (/[ -/]/.test(body)) return PASS;
+    if (/[ -/]/.test(body)) {
+      if (body === '!' && final === 'p' && !priv) this._softReset();
+      return PASS;
+    }
     if (priv === '?') {
       if (final === 'h' || final === 'l') return this._mode(body, final === 'h');
+      if (final === 'J' || final === 'K') return this._csi(`\x1b[${body}${final}`);
+      if (final === 'n') this._sync();
       return PASS;
     }
     if (priv) return PASS;
+    if (final !== 'm' && final !== 'h' && final !== 'l' && final !== 'n' && final !== 'q' && final !== 't') this.over = false;
     if (final === 'm') {
       this.attr = applySgr(this.attr, body);
+      this.cell = withLink(this.attr, this.link);
       return PASS;
     }
     const p = body === '' ? [] : body.split(';').map((v) => parseInt(v, 10) || 0);
@@ -463,66 +1073,94 @@ export class Relay {
     const rows = this.rows;
     const cols = this.cols;
     switch (final) {
-      case 'H': case 'f':
-        this.y = Math.min(rows - 1, Math.max(0, (p[0] || 1) - 1));
+      case 'H': case 'f': {
+        const top = this.origin ? this.top : 0;
+        const bot = this.origin ? this.bot : rows - 1;
+        this.y = Math.min(bot, Math.max(top, top + (p[0] || 1) - 1));
         this.x = Math.min(cols - 1, Math.max(0, (p[1] || 1) - 1));
         this.wrap = false;
+        this.tw = false;
         this.desync = false;
+        this._absolute();
         return PASS;
+      }
       case 'A':
         this._sync();
         this.y = Math.max(this.y >= this.top ? this.top : 0, this.y - n1);
-        this.wrap = false;
+        this._moved();
         return PASS;
       case 'B': case 'e':
         this._sync();
         this.y = Math.min(this.y <= this.bot ? this.bot : rows - 1, this.y + n1);
-        this.wrap = false;
+        this._moved();
         return PASS;
       case 'C': case 'a':
         this._sync();
         this.x = Math.min(cols - 1, this.x + n1);
-        this.wrap = false;
+        this._moved();
         return PASS;
       case 'D':
         this._sync();
-        this.x = Math.max(0, this.x - n1);
-        this.wrap = false;
+        this.x = Math.max(0, Math.min(this.x, cols - 1) - n1);
+        this._moved();
         return PASS;
       case 'E':
         this._sync();
         this.y = Math.min(this.y <= this.bot ? this.bot : rows - 1, this.y + n1);
         this.x = 0;
-        this.wrap = false;
+        this._moved();
         return PASS;
       case 'F':
         this._sync();
         this.y = Math.max(this.y >= this.top ? this.top : 0, this.y - n1);
         this.x = 0;
-        this.wrap = false;
+        this._moved();
         return PASS;
       case 'G': case '`':
         this._sync();
         this.x = Math.min(cols - 1, n1 - 1);
-        this.wrap = false;
+        this._moved();
         return PASS;
-      case 'd':
+      case 'd': {
         this._sync();
-        this.y = Math.min(rows - 1, n1 - 1);
-        this.wrap = false;
+        const top = this.origin ? this.top : 0;
+        const bot = this.origin ? this.bot : rows - 1;
+        this.y = Math.min(bot, top + n1 - 1);
+        this._moved(false);
+        this._absolute();
+        return PASS;
+      }
+      case 'I':
+        if (this.wrap) return DROP;
+        this._sync();
+        for (let k = 0; k < n1; k++) this.x = this._nextTab(this.x);
+        return PASS;
+      case 'Z':
+        if (this.wrap) return DROP;
+        this._sync();
+        for (let k = 0; k < n1; k++) this.x = this._prevTab(this.x);
+        return PASS;
+      case 'g':
+        this._sync();
+        if ((p[0] || 0) === 0) { if (!this.wrap) this.tabs.delete(this.x); } else if (p[0] === 3) this.tabs.clear();
         return PASS;
       case 'J': {
         this._sync();
         const m = p[0] || 0;
         const row = this.scr[this.y];
+        const x = this.wrap ? cols : this.x;
         if (m === 0) {
-          this._erase(row, this.x, cols);
-          for (let y = this.y + 1; y < rows; y++) this._erase(this.scr[y], 0, cols);
+          this._erase(row, x, cols);
+          if (x === 0) row.wrapped = false;
+          for (let y = this.y + 1; y < rows; y++) this._erase(this.scr[y], 0, cols, true);
         } else if (m === 1) {
-          for (let y = 0; y < this.y; y++) this._erase(this.scr[y], 0, cols);
-          this._erase(row, 0, this.x + 1);
-        } else {
-          for (let y = 0; y < rows; y++) this._erase(this.scr[y], 0, cols);
+          for (let y = 0; y < this.y; y++) this._erase(this.scr[y], 0, cols, true);
+          this._erase(row, 0, x + 1);
+        } else if (m === 2) {
+          for (let y = 0; y < rows; y++) this._erase(this.scr[y], 0, cols, true);
+        } else if (m === 3 && this.scr === this.main) {
+          this.sb = 0;
+          this.history = [];
         }
         return PASS;
       }
@@ -530,82 +1168,106 @@ export class Relay {
         this._sync();
         const m = p[0] || 0;
         const row = this.scr[this.y];
-        if (m === 0) this._erase(row, this.x, cols);
-        else if (m === 1) this._erase(row, 0, this.x + 1);
-        else this._erase(row, 0, cols);
+        const x = this.wrap ? cols : this.x;
+        if (m === 0) this._erase(row, x, cols);
+        else if (m === 1) this._erase(row, 0, x + 1);
+        else if (m === 2) this._erase(row, 0, cols);
         return PASS;
       }
       case 'X':
         this._sync();
         this._erase(this.scr[this.y], this.x, this.x + n1);
+        this.wrap = false;
         return PASS;
       case '@': case 'P': {
         this._sync();
         const row = this.scr[this.y];
-        const k = Math.min(n1, cols - this.x);
         const blank = bceOf(this.attr);
+        if (this.x > 0 && row.ch[this.x] === '') { row.ch[this.x - 1] = ' '; row.ch[this.x] = ' '; }
+        const tail = row.tailCh ? row.tailCh.length : 0;
+        const ch = tail ? row.ch.concat(row.tailCh) : row.ch;
+        const at = tail ? row.at.concat(row.tailAt) : row.at;
+        const len = ch.length;
+        const k = Math.min(n1, len - this.x);
         if (final === '@') {
-          row.ch.splice(this.x, 0, ...new Array(k).fill(' '));
-          row.at.splice(this.x, 0, ...new Array(k).fill(blank));
-          row.ch.length = cols;
-          row.at.length = cols;
+          ch.splice(this.x, 0, ...new Array(k).fill(' '));
+          at.splice(this.x, 0, ...new Array(k).fill(blank));
+          ch.length = len;
+          at.length = len;
+          if (ch[len - 1] !== '' && ch[len - 1] !== ' ' && cpWidth(ch[len - 1].codePointAt(0)) === 2) ch[len - 1] = ' ';
+          row.tlen = Math.min(cols, row.tlen + k);
         } else {
-          row.ch.splice(this.x, k);
-          row.at.splice(this.x, k);
-          for (let j = 0; j < k; j++) { row.ch.push(' '); row.at.push(blank); }
+          ch.splice(this.x, k);
+          at.splice(this.x, k);
+          for (let j = 0; j < k; j++) { ch.push(' '); at.push(blank); }
+          row.tlen = Math.max(this.x, row.tlen - k);
+        }
+        if (tail) {
+          row.ch = ch.slice(0, cols);
+          row.at = at.slice(0, cols);
+          row.tailCh = ch.slice(cols);
+          row.tailAt = at.slice(cols);
         }
         if (row.ch[this.x] === '') row.ch[this.x] = ' ';
-        if (row.rtl || row.shown) this._touch(row);
+        this.wrap = false;
+        if (held(row)) this._touch(row);
         return PASS;
       }
       case 'L': case 'M':
         this._sync();
         if (this.y >= this.top && this.y <= this.bot) {
-          if (final === 'L') this._scrollDown(this.y, this.bot, n1);
+          if (final === 'L') this._scrollDown(this.y, this.bot, n1, bceOf(this.attr));
           else this._scrollUp(this.y, this.bot, n1);
           this.x = 0;
         }
         this.wrap = false;
+        this.tw = false;
         return PASS;
       case 'S':
         this._scrollUp(this.top, this.bot, n1);
         return PASS;
       case 'T':
-        if (p.length <= 1) this._scrollDown(this.top, this.bot, n1);
+        if (p.length <= 1) this._scrollDown(this.top, this.bot, n1, DEFAULT_ATTR);
         return PASS;
       case 'r': {
         const t = (p[0] || 1) - 1;
-        const b = (p[1] || rows) - 1;
-        if (t < b && b < rows) { this.top = t; this.bot = b; }
-        else { this.top = 0; this.bot = rows - 1; }
-        this.x = 0;
-        this.y = 0;
-        this.wrap = false;
-        this.desync = false;
+        let b = (p.length < 2 || p[1] > rows || p[1] === 0) ? rows : p[1];
+        b -= 1;
+        if (b > t) {
+          this.top = t;
+          this.bot = b;
+          this._home();
+        }
         return PASS;
       }
       case 's':
-        if (body === '') {
-          this.saved = { x: this.x, y: this.y, attr: this.attr, wrap: this.wrap };
-          this._sync();
-        }
+        if (body === '') { this._sync(); this._saveCursor(); }
         return PASS;
       case 'u':
         if (body === '') this._restoreCursor();
         return PASS;
       case 'b': {
+        if (!join || !this.lastRow) return PASS;
+        const ch = this.lastRow.ch[this.lastX] || ' ';
         let rep = '';
-        const ch = this.lastCh;
-        for (let k = 0; k < Math.min(n1, cols * rows); k++) {
+        const count = Math.min(n1, cols * rows);
+        const cp = ch.codePointAt(0);
+        for (let k = 0; k < count; k++) {
           const before = this.inj;
           this.inj = '';
-          const ok = this._print(ch.codePointAt(0), ch);
+          const saved = this.cs;
+          this.cs = null;
+          const ok = this._print(cp, ch);
+          this.cs = saved;
           rep += before + this.inj + (ok ? ch : '');
           this.inj = '';
         }
         this.inj = rep;
         return DROP;
       }
+      case 'h': case 'l':
+        if (p.includes(4)) this.insert = final === 'h';
+        return PASS;
       case 'n':
         this._sync();
         return PASS;
@@ -614,29 +1276,56 @@ export class Relay {
     }
   }
 
+  _moved(shift = true) {
+    if (shift && this.origin) this.y = Math.min(this.bot, Math.max(this.top, this.top + this.y));
+    this.wrap = false;
+    this.over = false;
+    this.tw = false;
+    this.ty = this.y;
+  }
+
   _mode(body, on) {
     for (const m of body.split(';')) {
       switch (m) {
+        case '6':
+          this.origin = on;
+          this._home();
+          break;
         case '7':
           this.autowrap = on;
           break;
         case '2026':
-          if (on) {
-            this.inj += this._flush();
-            this.frame = true;
-          } else {
-            this.inj += this._flush();
-            this.frame = false;
-          }
+          this.inj += this._flush();
+          this.frame = on;
+          break;
+        case '1048':
+          if (on) { this._sync(); this._saveCursor(); } else this._restoreCursor();
           break;
         case '1049': case '1047': case '47':
-          if (on && this.scr !== this.alt) {
-            if (m === '1049') this.saved = { x: this.x, y: this.y, attr: this.attr, wrap: this.wrap };
-            this._sync();
-            this.alt = blankRows(this.rows, this.cols);
-            this.scr = this.alt;
-          } else if (!on && this.scr === this.alt) {
-            this.scr = this.main;
+          this.inj += this._flush();
+          this._sync();
+          if (on) {
+            if (m === '1049') this._saveCursor();
+            if (this.scr === this.main) {
+              this.mainY = this.y;
+              this.mainTabs = this.tabs;
+              this.tabs = defaultTabs(this.cols);
+              this.margins = [this.top, this.bot];
+              this.top = 0;
+              this.bot = this.rows - 1;
+              this.alt = blankRows(this.rows, this.cols, bceOf(this.attr));
+              this.scr = this.alt;
+            }
+          } else {
+            if (this.scr !== this.main) {
+              this.scr = this.main;
+              this.alt = null;
+              if (this.margins) [this.top, this.bot] = this.margins;
+              this.margins = null;
+              if (this.mainTabs) this.tabs = this.mainTabs;
+              this.mainTabs = null;
+              if (this.mainLost) { this.lost = true; this.mainLost = false; }
+            }
             if (m === '1049') this._restoreCursor();
           }
           break;
@@ -649,33 +1338,45 @@ export class Relay {
 
   _flush() {
     const scr = this.scr;
-    let s = '';
     const cur = scr[this.y];
     if (cur.shown && cur.cmapX !== this.x) { cur.dirty = true; this.dirty = true; }
+    let body = '';
     if (this.dirty) {
       this.dirty = false;
+      const ty = this.ty;
+      const open = this._open();
       for (let y = 0; y < this.rows; y++) {
         const row = scr[y];
         if (!row.dirty) continue;
-        row.dirty = false;
-        row.rtl = rowHasRtl(row);
-        if (row.rtl) {
-          s += this._drawRtl(row, y, y > 0 ? scr[y - 1] : null);
-          row.shown = true;
-        } else {
-          s += emitRow(y, row.ch, row.at, this.cols);
-          row.shown = false;
-          row.cmap = null;
-        }
+        body += this._drawRow(row, y, y > 0 ? scr[y - 1] : this.gone);
       }
+      if (body) body = open + body + this._close();
+      else { this.drawing = false; this.ty = ty; }
     }
     let cx = this.x;
     if (cur.shown && cur.cmap) cx = cur.cmap[this.x];
-    if (s || this.desync || cx !== this.x) {
-      s += '\x1b[0m' + this.attr.seq + cup(this.y, cx);
-      this.desync = cx !== this.x || this.wrap;
-    }
+    if (!body && ((!this.desync && cx === this.x) || this.parked === this.y * 65536 + cx)) return '';
+    let s = body;
+    s += this._place(cx);
+    if (body && !this.frame) s += '\x1b[?2026l';
+    this.desync = cx !== this.x || (this.wrap && !this.tw);
+    this.parked = this.y * 65536 + cx;
     return s;
+  }
+
+  _drawRow(row, y, above) {
+    row.dirty = false;
+    row.rtl = rowHasRtl(row);
+    if (row.rtl) {
+      const s = this._drawRtl(row, y, above);
+      row.shown = true;
+      return s;
+    }
+    row.shown = false;
+    row.cmap = null;
+    const [cells, end] = emitCells(row.ch, row.at, this.cols);
+    row.tlen = end;
+    return this._goto(y, 0) + cells;
   }
 
   _drawRtl(row, y, above) {
@@ -684,7 +1385,7 @@ export class Relay {
     const dat = row.at.slice();
     const cmap = new Int16Array(cols + 1);
     for (let x = 0; x <= cols; x++) cmap[x] = x;
-    const cursorX = this.y === y ? this.x : -1;
+    const cursorX = this.y === y && this.scr[this.y] === row ? this.x : -1;
     let a = 0;
     row.dir = 0;
     row.b0 = -1;
@@ -698,15 +1399,18 @@ export class Relay {
     }
     row.cmap = cmap;
     row.cmapX = cursorX;
-    return emitRow(y, dch, dat, cols);
+    const [cells, end] = emitCells(dch, dat, cols);
+    row.tlen = end;
+    return this._goto(y, 0) + cells;
   }
 }
+
+const C1_INTRO = new Set([0x9b, 0x9d, 0x90, 0x98, 0x9e, 0x9f]);
 
 function rowHasRtl(row) {
   for (const ch of row.ch) {
     if (ch === '' || ch === ' ') continue;
-    const cp = ch.codePointAt(0);
-    if (cp >= 0x590 && isRtlLetter(cp)) return true;
+    if (isRtlText(ch.codePointAt(0))) return true;
   }
   return false;
 }
@@ -714,7 +1418,7 @@ function rowHasRtl(row) {
 const isColumnRule = (ch) => ch === '│' || ch === '┃' || ch === '║' || ch === '┆' || ch === '┊';
 
 const isSpace = (ch) =>
-  ch === ' ' || ch === '' || ch === '\u00a0' || ch === '\u3000' || ch === '\u202f' ||
+  ch === ' ' || ch === '\u00a0' || ch === '\u3000' || ch === '\u202f' ||
   ch === '\u205f' || (ch >= '\u2000' && ch <= '\u200a');
 const blankCell = (ch, at) => isSpace(ch) && !at.visible;
 
@@ -726,6 +1430,11 @@ const isMarker = (cp) => {
 };
 
 const isDigit = (cp) => (cp >= 0x30 && cp <= 0x39) || (cp >= 0x660 && cp <= 0x669) || (cp >= 0x6f0 && cp <= 0x6f9);
+
+const BIDI_FORMAT = (cp) => {
+  const c = bidiClass(cp);
+  return (c === L || c === R || c === AL || c >= 14) && isFormatChar(cp);
+};
 
 function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, cols) {
   const ch = row.ch;
@@ -751,19 +1460,15 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, cols) {
   if (b1 <= b0) return;
 
   let rtl = false;
-  let pl = -1;
+  const probe = [];
   for (let x = b0; x < b1; x++) {
     if (ch[x] === '') continue;
     const cp = base(x);
-    if (!rtl && cp >= 0x590 && isRtlLetter(cp)) rtl = true;
-    if (pl < 0) {
-      const c = bidiClass(cp);
-      if (c === R || c === AL || c === AN) pl = 1;
-      else if (c === L || c === EN) pl = 0;
-    }
+    if (!rtl && isRtlText(cp)) rtl = true;
+    for (const c of ch[x]) probe.push(c.codePointAt(0));
   }
   if (!rtl) return;
-  if (pl < 0) pl = 0;
+  let pl = paragraphLevel(probe);
   if (pl === 0 && above && above.shown && above.dir === 1 && above.b0 === b0) pl = 1;
   if (whole) { row.dir = pl; row.b0 = b0; }
 
@@ -771,20 +1476,33 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, cols) {
   const units = [];
   for (let x = from; x < b1; x++) {
     if (ch[x] === '') continue;
-    units.push({ x, w: x + 1 < cols && ch[x + 1] === '' ? 2 : 1, text: ch[x], cp: base(x), at: at[x] });
+    const w = cpWidth(base(x)) === 2 && x + 1 < cols ? 2 : 1;
+    units.push({ x, w, text: ch[x], cp: base(x), at: at[x] });
+    if (w === 2) x++;
   }
 
   const cps = [];
   const at0 = [];
+  const bidiCps = [];
+  const bidiAt = [];
   for (const u of units) {
     at0.push(cps.length);
-    for (const c of u.text) cps.push(c.codePointAt(0));
+    bidiAt.push(bidiCps.length);
+    let first = true;
+    for (const c of u.text) {
+      const cp = c.codePointAt(0);
+      cps.push(cp);
+      if (first || BIDI_FORMAT(cp)) bidiCps.push(cp);
+      first = false;
+    }
   }
   const shaped = shapeCps(cps);
-  const levels = resolveLevels(units.map((u) => u.cp), pl);
+  const bidiLevels = resolveLevels(bidiCps, pl);
+  const levels = new Uint8Array(units.length);
+  for (let k = 0; k < units.length; k++) levels[k] = bidiLevels[bidiAt[k]];
   const glyph = units.map((u, k) => {
     const s = shaped[at0[k]];
-    if (s < 0) return null;
+    if (s < 0 || isFormatChar(s) || cpWidth(s) === 0) return null;
     let g = String.fromCodePoint(levels[k] & 1 ? mirrorOf(s) : s);
     const end = k + 1 < units.length ? at0[k + 1] : cps.length;
     for (let m = at0[k] + 1; m < end; m++) {
@@ -797,8 +1515,9 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, cols) {
   for (let k = 0; k < units.length; k++) if (glyph[k] !== null) width += units[k].w;
   const limit = whole ? cols - 2 : b - 2;
   const start = pl === 1 ? Math.max(from, limit - width + 1) : from;
+  const fill = bceOf(b1 < b ? at[b1] : at[from]);
 
-  for (let x = from; x < b1; x++) { dch[x] = ' '; dat[x] = DEFAULT_ATTR; }
+  for (let x = from; x < b1; x++) { dch[x] = ' '; dat[x] = fill; }
   const vis = new Int16Array(units.length).fill(-1);
   let col = start;
   for (const k of visualOrder(levels)) {
@@ -816,61 +1535,63 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, cols) {
   for (let x = from; x <= b1; x++) {
     while (k < units.length && units[k].x < x) k++;
     let c;
-    if (k === 0) {
+    let u = k - 1;
+    while (u >= 0 && vis[u] < 0) u--;
+    if (u < 0) {
       c = pl === 1 ? start + width : start;
     } else {
-      let u = k - 1;
-      while (u > 0 && vis[u] < 0) u--;
       c = levels[u] & 1 ? vis[u] - 1 : vis[u] + units[u].w;
     }
     cmap[x] = Math.max(0, Math.min(cols - 1, c));
   }
 }
 
-function emitRow(y, ch, at, cols) {
+function emitCells(ch, at, cols) {
   let end = cols;
   while (end > 0 && blankCell(ch[end - 1], at[end - 1]) && at[end - 1] === DEFAULT_ATTR) end--;
-  let s = cup(y, 0);
+  let s = '';
   let cur = null;
+  let link = null;
   for (let x = 0; x < end; x++) {
-    const c = ch[x];
+    let c = ch[x];
     if (c === '') continue;
-    if (at[x] !== cur) {
-      cur = at[x];
-      s += '\x1b[0m' + cur.seq;
+    const a = at[x];
+    if (a !== cur) {
+      if (a.link !== link) {
+        if (link) s += '\x1b]8;;\x1b\\';
+        link = a.link;
+        if (link) s += `\x1b]8;${link}\x1b\\`;
+      }
+      if (!cur || a.seq !== cur.seq) s += '\x1b[0m' + a.seq;
+      cur = a;
     }
+    const cw = cpWidth(c.codePointAt(0));
+    if (cw === 0 || (cw === 2 && x === cols - 1)) c = ' ';
     s += c;
-    if (x + 1 < cols && ch[x + 1] === '') s += `\x1b[${x + 3}G`;
+    if (x + 2 < cols && ch[x + 1] === '') s += `\x1b[${x + 3}G`;
   }
+  if (link) s += '\x1b]8;;\x1b\\';
   s += '\x1b[0m';
   if (end < cols) s += '\x1b[K';
-  return s;
+  return [s, end];
+}
+
+function csiEnd(s, i, from) {
+  const n = s.length;
+  for (let j = from; j < n; j++) {
+    const c = s.charCodeAt(j);
+    if (c >= 0x40 && c <= 0x7e) return j + 1;
+    if (c < 0x20 || c > 0x7e) return j;
+  }
+  return -1;
 }
 
 function seqEnd(s, i) {
   const n = s.length;
   if (i + 1 >= n) return -1;
   const c1 = s[i + 1];
-  if (c1 === '[') {
-    for (let j = i + 2; j < n; j++) {
-      const c = s.charCodeAt(j);
-      if (c >= 0x40 && c <= 0x7e) return j + 1;
-      if (c < 0x20 || c > 0x7e) return j;
-    }
-    return -1;
-  }
-  if (c1 === ']' || c1 === 'P' || c1 === '_' || c1 === '^' || c1 === 'X') {
-    for (let j = i + 2; j < n; j++) {
-      const c = s.charCodeAt(j);
-      if (c === 0x07 && c1 === ']') return j + 1;
-      if (c === 0x9c) return j + 1;
-      if (c === 0x1b) {
-        if (j + 1 >= n) return -1;
-        return s[j + 1] === '\\' ? j + 2 : j;
-      }
-    }
-    return n - i > 1 << 20 ? n : -1;
-  }
+  if (c1 === '[') return csiEnd(s, i, i + 2);
+  if (c1 < ' ') return i + 1;
   if ('()*+-./#% '.includes(c1)) return i + 3 <= n ? i + 3 : -1;
   return i + 2;
 }

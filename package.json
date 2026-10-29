@@ -1,15 +1,17 @@
 {
   "name": "rtlfix",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Persian, Arabic and Hebrew that read correctly in Claude Code, Qwen Code and other terminal programs, in terminals without RTL support such as VS Code's integrated terminal",
   "type": "module",
   "bin": {
-    "rtlfix": "src/cli.mjs"
+    "rtlfix": "bin/rtlfix.cjs"
   },
   "files": [
+    "bin",
     "src",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node --test"

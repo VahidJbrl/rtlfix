@@ -4,16 +4,48 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [18, 20, 22, 24]
+        node: [18, 20, 22, 24, 26]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
-      - run: node src/cli.mjs demo
+      - run: node bin/rtlfix.cjs demo
+      - run: node bin/rtlfix.cjs doctor
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm pack
+      - run: npm install -g ./rtlfix-*.tgz
+      - run: rtlfix --version
+      - run: printf 'سلام دنیا\n' | rtlfix
+      - run: node bin/rtlfix.cjs install && ~/.local/bin/rtlfix --version && node bin/rtlfix.cjs uninstall
+
+  unicode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Download the Unicode bidi conformance tests
+        run: |
+          mkdir -p ucd
+          for f in BidiTest.txt BidiCharacterTest.txt; do
+            curl -fsSL --retry 3 -o "ucd/$f" "https://www.unicode.org/Public/18.0.0/ucd/$f"
+          done
+      - run: node scripts/bidi-conformance.mjs ucd
