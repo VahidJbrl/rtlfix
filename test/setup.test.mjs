@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const BIN = fileURLToPath(new URL('../bin/rtlfix.cjs', import.meta.url));
+const posix = { skip: process.platform === 'win32' };
 
 function sandbox() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'rtlfix-test-')));
@@ -15,7 +16,7 @@ function sandbox() {
   return { root, env, run, home: env.RTLFIX_HOME, link: join(env.RTLFIX_BIN, 'rtlfix'), done: () => rmSync(root, { recursive: true, force: true }) };
 }
 
-test('install, reinstall from the installed copy, and uninstall', () => {
+test('install, reinstall from the installed copy, and uninstall', posix, () => {
   const s = sandbox();
   try {
     assert.equal(s.run(process.execPath, [BIN, 'install']).status, 0);
@@ -35,7 +36,7 @@ test('install, reinstall from the installed copy, and uninstall', () => {
   }
 });
 
-test('the installed command still works after the recorded Node.js is gone', () => {
+test('the installed command still works after the recorded Node.js is gone', posix, () => {
   const s = sandbox();
   try {
     assert.equal(s.run(process.execPath, [BIN, 'install']).status, 0);
@@ -48,7 +49,7 @@ test('the installed command still works after the recorded Node.js is gone', () 
   }
 });
 
-test('install refuses to overwrite things it does not own', () => {
+test('install refuses to overwrite things it does not own', posix, () => {
   const s = sandbox();
   try {
     mkdirSync(join(s.root, 'bin'), { recursive: true });
@@ -67,7 +68,7 @@ test('install refuses to overwrite things it does not own', () => {
   }
 });
 
-test('doctor reports problems in its exit status', () => {
+test('doctor reports problems in its exit status', posix, () => {
   const s = sandbox();
   try {
     const ok = s.run(process.execPath, [BIN, 'doctor']);
@@ -78,4 +79,10 @@ test('doctor reports problems in its exit status', () => {
   } finally {
     s.done();
   }
+});
+
+test('on Windows, install points to npm', { skip: process.platform !== 'win32' }, () => {
+  const r = spawnSync(process.execPath, [BIN, 'install'], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /npm install -g/);
 });

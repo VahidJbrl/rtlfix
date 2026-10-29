@@ -94,6 +94,10 @@ function firstStrong(types, from, to) {
   return -1;
 }
 
+export function bracketType(cp) {
+  return BRACKET_TYPE.get(cp) || 0;
+}
+
 export function classesOf(cps) {
   const out = new Uint8Array(cps.length);
   for (let i = 0; i < cps.length; i++) out[i] = bidiClass(cps[i]);

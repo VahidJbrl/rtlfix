@@ -1,6 +1,6 @@
 import {
-  bidiClass, isRtlLetter, resolveLevels, visualOrder, mirrorOf, paragraphLevel,
-  L, R, AL, ET, ES, ON,
+  bidiClass, isRtlLetter, resolveLevels, visualOrder, mirrorOf, paragraphLevel, bracketType,
+  L, R, AL, EN, ET, ES, AN, ON,
 } from './bidi.mjs';
 import { shapeCps } from './shaping.mjs';
 import { cpWidth } from './width.mjs';
@@ -268,7 +268,9 @@ const PASS = true;
 const DROP = false;
 
 export class Relay {
-  constructor({ cols = 80, rows = 24, cursor } = {}) {
+  constructor({ cols = 80, rows = 24, cursor, visual = false, markCells = false } = {}) {
+    this.visual = visual;
+    this.markCells = markCells;
     this.cols = cols;
     this.rows = rows;
     this.decoder = new Utf8Decoder();
@@ -1285,6 +1287,7 @@ export class Relay {
   }
 
   _mode(body, on) {
+    if (body === '9001') return DROP;
     for (const m of body.split(';')) {
       switch (m) {
         case '6':
@@ -1345,6 +1348,9 @@ export class Relay {
       this.dirty = false;
       const ty = this.ty;
       const open = this._open();
+      if (this.visual) {
+        for (let y = 0; y + 1 < this.rows; y++) if (scr[y].dep && scr[y].shown && scr[y + 1].dirty) scr[y].dirty = true;
+      }
       for (let y = 0; y < this.rows; y++) {
         const row = scr[y];
         if (!row.dirty) continue;
@@ -1387,13 +1393,16 @@ export class Relay {
     for (let x = 0; x <= cols; x++) cmap[x] = x;
     const cursorX = this.y === y && this.scr[this.y] === row ? this.x : -1;
     let a = 0;
+    const below = this.visual && this.scr[y] === row && y + 1 < this.rows ? this.scr[y + 1] : null;
     row.dir = 0;
     row.b0 = -1;
+    row.x0 = -1;
+    row.dep = false;
     for (let x = 0; x <= cols; x++) {
       if (x < cols && !isColumnRule(row.ch[x])) continue;
       if (x > a) {
         const whole = a === 0 && x === cols;
-        layoutSegment(row, a, x, whole, dch, dat, cmap, cursorX, whole ? above : null, cols);
+        layoutSegment(row, a, x, whole, dch, dat, cmap, cursorX, whole ? above : null, whole ? below : null, cols, this.visual, this.markCells);
       }
       a = x + 1;
     }
@@ -1436,26 +1445,120 @@ const BIDI_FORMAT = (cp) => {
   return (c === L || c === R || c === AL || c >= 14) && isFormatChar(cp);
 };
 
-function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, cols) {
-  const ch = row.ch;
-  const at = row.at;
+function leadOf(ch, at, a, b, loose = false) {
   const base = (x) => (ch[x] === '' ? 0x20 : ch[x].codePointAt(0));
+  const blank = (x) => (loose ? isSpace(ch[x]) : blankCell(ch[x], at[x]));
+  const markerEnd = (k) => {
+    let e = k;
+    while (e < b && !blank(e) && isMarker(base(e))) e++;
+    if (e === k && e < b && isDigit(base(e))) {
+      let d = e;
+      while (d < b && isDigit(base(d))) d++;
+      if (d < b && (ch[d] === '.' || ch[d] === ')')) e = d + 1;
+    }
+    return e;
+  };
   let m0 = a;
-  while (m0 < b && blankCell(ch[m0], at[m0])) m0++;
-  let j = m0;
-  while (j < b && !blankCell(ch[j], at[j]) && isMarker(base(j))) j++;
-  if (j === m0 && j < b && isDigit(base(j))) {
-    let k = j;
-    while (k < b && isDigit(base(k))) k++;
-    if (k < b && (ch[k] === '.' || ch[k] === ')')) j = k + 1;
-  }
+  while (m0 < b && blank(m0)) m0++;
+  let j = markerEnd(m0);
   let b0 = m0;
-  if (j > m0 && j < b && blankCell(ch[j], at[j])) {
+  if (j > m0 && j < b && blank(j)) {
     b0 = j;
-    while (b0 < b && blankCell(ch[b0], at[b0])) b0++;
+    while (b0 < b && blank(b0)) b0++;
+    const k = markerEnd(b0);
+    if (k > b0 && k < b && blank(k)) {
+      j = k;
+      b0 = k;
+      while (b0 < b && blank(b0)) b0++;
+    }
   }
+  return [m0, j, b0];
+}
+
+function continues(row, x0, cols) {
+  const [m0, , b0] = leadOf(row.ch, row.at, 0, cols, true);
+  return m0 < cols && b0 === m0 && (m0 === x0 || m0 === x0 + 1);
+}
+
+function edgeVote(ch, x, step) {
+  while (ch[x] === '') x += step;
+  const cp = ch[x].codePointAt(0);
+  const c = bidiClass(cp);
+  if (c === L || c === R || c === AL || c === EN || c === AN) return 0;
+  const bracket = bracketType(cp);
+  if (bracket) return (bracket === 1) === (step > 0) ? -1 : 1;
+  return step > 0 ? 1 : -1;
+}
+
+function strongEnds(ch, b0, b1) {
+  let first = -1;
+  let last = -1;
+  for (let x = b0; x < b1; x++) {
+    if (ch[x] === '') continue;
+    const c = bidiClass(ch[x].codePointAt(0));
+    const d = c === L ? 0 : c === R || c === AL ? 1 : -1;
+    if (d < 0) continue;
+    if (first < 0) first = d;
+    last = d;
+  }
+  return [first, last];
+}
+
+function toLogical(ch, at, b0, b1, cols, level) {
+  const cells = [];
+  for (let x = b0; x < b1; x++) {
+    if (ch[x] === '') continue;
+    const w = cpWidth(ch[x].codePointAt(0)) === 2 && x + 1 < cols ? 2 : 1;
+    cells.push({ ch: ch[x], at: at[x], w });
+    if (w === 2) x++;
+  }
+  const levels = resolveLevels(cells.map((c) => c.ch.codePointAt(0)), level, { glue: false });
+  const nch = ch.slice();
+  const nat = at.slice();
+  let x = b0;
+  for (const k of visualOrder(levels)) {
+    const c = cells[k];
+    nch[x] = c.ch;
+    nat[x] = c.at;
+    if (c.w === 2) { nch[x + 1] = ''; nat[x + 1] = c.at; }
+    x += c.w;
+  }
+  return [nch, nat];
+}
+
+function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, below, cols, visual = false, markCells = false) {
+  let ch = row.ch;
+  let at = row.at;
+  const base = (x) => (ch[x] === '' ? 0x20 : ch[x].codePointAt(0));
+  let [m0, j, b0] = leadOf(ch, at, a, b);
   let b1 = b;
   while (b1 > b0 && blankCell(ch[b1 - 1], at[b1 - 1])) b1--;
+  const e1 = b1;
+  if (visual) {
+    const [v0, vj, vb] = leadOf(ch, at, a, b, true);
+    let v1 = b;
+    while (v1 > vb && isSpace(ch[v1 - 1])) v1--;
+    let x0 = vb;
+    let near = false;
+    if (whole && vb > v0) x0 = vj + 1;
+    else if (whole && above && above.shown && above.x0 >= 0 && (vb === above.x0 || vb === above.x0 + 1)) x0 = above.x0;
+    else if (whole && vb > 0 && below && continues(below, vb - 1, cols)) { x0 = vb - 1; near = true; }
+    const extra = vb === x0 + 1;
+    const [first, last] = strongEnds(ch, vb, v1);
+    const open = first === 0 && last === 1 && !extra;
+    let level = first < 0 ? -1 : first === 1 || last === 1 ? 1 : 0;
+    if (open) {
+      const vote = edgeVote(ch, vb, 1) + edgeVote(ch, v1 - 1, -1);
+      level = vote ? (vote > 0 ? 1 : 0) : whole && below && continues(below, x0, cols) ? 0 : 1;
+    }
+    if (whole) { row.x0 = x0; row.dep = open || near; }
+    if (level >= 0) {
+      [ch, at] = toLogical(ch, at, level === 1 && extra ? x0 : vb, v1, cols, level);
+      [m0, j, b0] = leadOf(ch, at, a, b);
+      b1 = b;
+      while (b1 > b0 && blankCell(ch[b1 - 1], at[b1 - 1])) b1--;
+    }
+  }
   if (cursorX > b1 && cursorX < b) b1 = cursorX;
   if (b1 <= b0) return;
 
@@ -1500,24 +1603,34 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, cols) {
   const bidiLevels = resolveLevels(bidiCps, pl);
   const levels = new Uint8Array(units.length);
   for (let k = 0; k < units.length; k++) levels[k] = bidiLevels[bidiAt[k]];
-  const glyph = units.map((u, k) => {
+  const glyph = new Array(units.length).fill(null);
+  for (let k = 0; k < units.length; k++) {
     const s = shaped[at0[k]];
-    if (s < 0 || isFormatChar(s) || cpWidth(s) === 0) return null;
-    let g = String.fromCodePoint(levels[k] & 1 ? mirrorOf(s) : s);
     const end = k + 1 < units.length ? at0[k + 1] : cps.length;
+    let tail = '';
     for (let m = at0[k] + 1; m < end; m++) {
-      if (!isFormatChar(cps[m]) && shaped[m] >= 0) g += String.fromCodePoint(shaped[m]);
+      if (!isFormatChar(cps[m]) && shaped[m] >= 0) tail += String.fromCodePoint(shaped[m]);
     }
-    return g;
-  });
+    if (s < 0) {
+      if (k > 0 && glyph[k - 1] !== null) glyph[k - 1] += tail;
+      continue;
+    }
+    if (isFormatChar(s) || cpWidth(s) === 0) continue;
+    glyph[k] = String.fromCodePoint(levels[k] & 1 ? mirrorOf(s) : s) + tail;
+  }
 
   let width = 0;
-  for (let k = 0; k < units.length; k++) if (glyph[k] !== null) width += units[k].w;
+  let marks = 0;
+  for (let k = 0; k < units.length; k++) {
+    if (glyph[k] === null) continue;
+    width += units[k].w;
+    if (markCells) marks += [...glyph[k]].length - 1;
+  }
   const limit = whole ? cols - 2 : b - 2;
-  const start = pl === 1 ? Math.max(from, limit - width + 1) : from;
+  const start = pl === 1 ? Math.max(from, limit - width - marks + 1) : from;
   const fill = bceOf(b1 < b ? at[b1] : at[from]);
 
-  for (let x = from; x < b1; x++) { dch[x] = ' '; dat[x] = fill; }
+  for (let x = from; x < Math.max(b1, e1); x++) { dch[x] = ' '; dat[x] = fill; }
   const vis = new Int16Array(units.length).fill(-1);
   let col = start;
   for (const k of visualOrder(levels)) {

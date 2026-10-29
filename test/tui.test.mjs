@@ -17,7 +17,7 @@ function runLauncher(cmd) {
 }
 
 test('Claude Code in VS Code starts without its own bidi', () => {
-  const env = childEnv(['claude'], { TERM_PROGRAM: 'vscode', TERM_PROGRAM_VERSION: '1.100.0', PATH: '/bin' });
+  const env = childEnv(['claude'], { TERM_PROGRAM: 'vscode', TERM_PROGRAM_VERSION: '1.100.0', PATH: '/bin' }, 'linux');
   assert.equal(env.TERM_PROGRAM, undefined);
   assert.equal(env.TERM_PROGRAM_VERSION, undefined);
   assert.equal(env.CLAUDE_CODE_AUTO_CONNECT_IDE, 'true');
@@ -26,8 +26,13 @@ test('Claude Code in VS Code starts without its own bidi', () => {
   assert.equal(env.FORCE_HYPERLINK, '1');
   assert.equal(env.PATH, '/bin');
   assert.equal(env.RTLFIX_TUI, '1');
-  const own = childEnv(['/opt/bin/claude'], { TERM_PROGRAM: 'vscode', CLAUDE_CODE_AUTO_CONNECT_IDE: 'false' });
+  const own = childEnv(['/opt/bin/claude'], { TERM_PROGRAM: 'vscode', CLAUDE_CODE_AUTO_CONNECT_IDE: 'false' }, 'linux');
   assert.equal(own.CLAUDE_CODE_AUTO_CONNECT_IDE, 'false');
+});
+
+test('on Windows Claude Code keeps its editor settings, since it reorders text there anyway', () => {
+  const vs = { TERM_PROGRAM: 'vscode', TERM_PROGRAM_VERSION: '1.100.0' };
+  assert.deepEqual(childEnv(['claude'], vs, 'win32'), { ...vs, RTLFIX_TUI: '1' });
 });
 
 test('Claude Code is recognised however it is started', () => {
@@ -66,7 +71,7 @@ test('the launcher reports a missing program', { skip: !hasScript }, () => {
   assert.match(r.stdout, /no-such-program-rtlfix: command not found/);
 });
 
-test('without a terminal the program simply runs', () => {
+test('without a terminal the program simply runs', { skip: process.platform === 'win32' }, () => {
   const r = spawnSync(process.execPath, [BIN, 'tui', 'sh', '-c', 'echo hi "$@"; exit 5', 'x', '--', 'a'], { encoding: 'utf8', input: '' });
   assert.equal(r.status, 5);
   assert.equal(r.stdout, 'hi -- a\n');
@@ -75,7 +80,13 @@ test('without a terminal the program simply runs', () => {
   assert.equal(spawnSync(process.execPath, [BIN, 'tui', '--help'], { encoding: 'utf8' }).status, 0);
 });
 
+test('without a terminal a program found by its path runs with its arguments', () => {
+  const r = spawnSync(process.execPath, [BIN, 'tui', process.execPath, '-e', 'console.log(process.argv.slice(1).join("|")); process.exit(5)', 'x', 'a b', '"q"'], { encoding: 'utf8', input: '' });
+  assert.equal(r.status, 5);
+  assert.equal(r.stdout.trim(), 'x|a b|"q"');
+});
+
 test('inside rtlfix, rtlfix runs the program directly', () => {
-  const r = spawnSync(process.execPath, [BIN, 'tui', 'sh', '-c', 'echo "$RTLFIX_TUI"'], { encoding: 'utf8', input: '', env: { ...process.env, RTLFIX_TUI: '1' } });
-  assert.equal(r.stdout, '1\n');
+  const r = spawnSync(process.execPath, [BIN, 'tui', process.execPath, '-e', 'console.log(process.env.RTLFIX_TUI)'], { encoding: 'utf8', input: '', env: { ...process.env, RTLFIX_TUI: '1' } });
+  assert.equal(r.stdout.trim(), '1');
 });

@@ -69,6 +69,11 @@ function launcherScript(dir) {
 
 export function install(argv = []) {
   rejectArgs('install', argv);
+  if (process.platform === 'win32') {
+    console.error('rtlfix install sets rtlfix up on Linux. On Windows, install it with npm:');
+    console.error('  npm install -g github:VahidJbrl/rtlfix');
+    process.exit(1);
+  }
   const dir = installDir();
   const bin = binDir();
   const link = join(bin, 'rtlfix');
@@ -148,7 +153,7 @@ export function uninstall(argv = []) {
   }
 }
 
-export function doctor(argv = []) {
+export async function doctor(argv = []) {
   rejectArgs('doctor', argv);
   let bad = 0;
   const ok = (good, label, detail) => {
@@ -159,16 +164,28 @@ export function doctor(argv = []) {
   console.log(`rtlfix ${PKG.version}\n`);
   const major = Number(process.versions.node.split('.')[0]);
   ok(major >= 18, 'node', `${process.version}${major >= 18 ? '' : ' (needs 18 or newer)'}`);
-  const linux = process.platform === 'linux';
-  ok(linux, 'system', linux ? 'Linux' : `${process.platform} (rtlfix tui needs Linux or WSL)`);
-  let script = null;
-  try {
-    script = execFileSync('script', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch { }
-  ok(Boolean(script && script.includes('util-linux')), 'script', script || 'not found (install util-linux)');
+  let find = which;
+  if (process.platform === 'win32') {
+    const windows = await import('./windows.mjs');
+    const build = windows.windowsBuild();
+    ok(build >= 17763, 'system', `Windows build ${build}${build >= 17763 ? '' : ' (rtlfix tui needs Windows 10 version 1809 or newer)'}`);
+    const csc = windows.compiler();
+    ok(Boolean(csc), 'compiler', csc || 'not found (rtlfix tui needs .NET Framework 4, which Windows includes)');
+    const editor = windows.editorConpty();
+    info('console', editor ? `from the editor, ${dirname(editor)}` : 'the one built into Windows');
+    find = (name) => windows.findProgram(name);
+  } else {
+    const linux = process.platform === 'linux';
+    ok(linux, 'system', linux ? 'Linux' : `${process.platform} (rtlfix tui needs Linux, WSL or Windows)`);
+    let script = null;
+    try {
+      script = execFileSync('script', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    } catch { }
+    ok(Boolean(script && script.includes('util-linux')), 'script', script || 'not found (install util-linux)');
+  }
   info('terminal', process.env.TERM_PROGRAM || process.env.TERMINAL_EMULATOR || process.env.TERM || 'unknown');
   if (process.env.RTLFIX_TUI) info('session', 'already running inside rtlfix');
-  for (const name of ['claude', 'qwen']) info(name, which(name) || 'not found');
+  for (const name of ['claude', 'qwen']) info(name, find(name) || 'not found');
   console.log('\n  Run `rtlfix demo` to see whether this terminal needs rtlfix.');
   if (bad) process.exitCode = 1;
 }

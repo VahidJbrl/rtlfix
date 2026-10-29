@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.0 (2026-10-29)
+
+Windows support.
+
+- `rtlfix claude`, `rtlfix qwen` and `rtlfix tui` work natively on Windows 10 version 1809 and newer, in PowerShell and the command prompt, for example in VS Code's terminal. A small pseudo console helper written in C# takes the place of util-linux `script`. It is built on first use with the C# compiler that comes with Windows and kept in `%LOCALAPPDATA%\rtlfix`.
+- In VS Code, Cursor and similar editors the helper uses the console host that the editor ships with, so the agent's output reaches rtlfix exactly as written. The console built into Windows counts the Persian half-space (ZWNJ) as a column, which garbles Claude Code's screen.
+- Claude Code on Windows always puts right-to-left text in display order itself. rtlfix turns each line back into reading order and then draws it as on Linux. For lines that mix Persian and English, the way Claude Code wrapped the line and the punctuation at its ends tell which direction it used.
+- Programs are found the way cmd.exe finds them, with PATH and PATHEXT. `.cmd` and `.bat` files such as npm's `claude.cmd` are started through cmd.exe with their arguments escaped, and the exit code is passed on.
+- Typing works as before, including Persian punctuation such as «،» and «؛» that Windows sends as Alt+Numpad sequences.
+- Window resizes reach rtlfix before the program redraws.
+- Right-aligned lines leave room for marks such as the tanvin, which the console built into Windows gives a column of their own.
+- `rtlfix doctor` checks the Windows version and the C# compiler and shows which console host is used. `rtlfix install` points to npm on Windows.
+
+On every platform:
+
+- A mark on an alef, such as the tanvin in «مثلاً», is no longer lost when the alef joins a lam.
+- A list item inside a bullet (`● - …`) keeps both markers in front of the text.
+
 ## 1.1.0 (2026-10-28)
 
 Fixes found by testing rtlfix against xterm.js itself, real Claude Code and Qwen Code sessions, Unicode's conformance tests and random terminal output.

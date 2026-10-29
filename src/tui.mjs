@@ -1,6 +1,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { readSync, writeSync, readFileSync, readdirSync } from 'node:fs';
 import { constants } from 'node:os';
+import { isatty } from 'node:tty';
 import { Relay } from './relay.mjs';
 
 const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
@@ -14,9 +15,9 @@ export function isClaude(cmd) {
   return cmd.slice(0, 3).some((a) => /(^|[/\\])claude(\.exe|\.js|\.mjs)?$|@anthropic-ai[/\\]claude-code/.test(String(a)));
 }
 
-export function childEnv(cmd, env = process.env) {
+export function childEnv(cmd, env = process.env, platform = process.platform) {
   const out = { ...env, RTLFIX_TUI: '1' };
-  if (!isClaude(cmd)) return out;
+  if (!isClaude(cmd) || platform === 'win32') return out;
   if (out.TERM_PROGRAM !== 'vscode' && out.WT_SESSION === undefined) return out;
   const inVsCode = out.TERM_PROGRAM === 'vscode';
   delete out.TERM_PROGRAM;
@@ -115,15 +116,134 @@ export function cursorPosition(timeout = 1000) {
   }
 }
 
-function runDirect(cmd, env = process.env) {
-  const child = spawn(cmd[0], cmd.slice(1), { stdio: 'inherit', env });
+function runDirect(cmd, env = process.env, windows = null) {
+  let child;
+  if (windows && windows.isBatch(windows.program)) {
+    child = spawn(windows.comspec(env), [windows.batchLine(windows.program, cmd.slice(1))], { stdio: 'inherit', env, windowsVerbatimArguments: true });
+  } else {
+    child = spawn(windows ? windows.program : cmd[0], cmd.slice(1), { stdio: 'inherit', env });
+  }
   child.on('error', (e) => {
     console.error(`rtlfix: ${cmd[0]}: ${e.code === 'ENOENT' ? 'command not found' : e.message}`);
     process.exit(127);
   });
-  for (const sig of ['SIGINT', 'SIGQUIT']) process.on(sig, () => { });
+  for (const sig of ['SIGINT', 'SIGQUIT', 'SIGBREAK']) process.on(sig, () => { });
   for (const sig of ['SIGTERM', 'SIGHUP']) process.on(sig, () => child.kill(sig));
   child.on('close', (code, signal) => process.exit(code ?? signalCode(signal)));
+}
+
+const SIZE = '\x1b]rtlfix;size;';
+
+function pipeRelay(child, { cursor, hello = false, filter = null, visual = false, markCells = false } = {}) {
+  let relay = hello ? null : new Relay({ cols: process.stdout.columns, rows: process.stdout.rows, cursor, visual });
+  let head = Buffer.alloc(0);
+  let tail = Buffer.alloc(0);
+  let failed = false;
+  let timer = null;
+  const write = (buf) => { if (buf.length) process.stdout.write(buf); };
+  const render = (fn, raw) => {
+    if (failed || !relay) return write(raw);
+    try {
+      write(fn());
+    } catch {
+      failed = true;
+      write(raw);
+    }
+  };
+  const later = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => render(() => relay.tick(), Buffer.alloc(0)), 40);
+  };
+  child.stdout.on('data', (chunk) => {
+    if (!relay) {
+      head = Buffer.concat([head, chunk]);
+      const nl = head.indexOf(0x0a);
+      if (nl < 0 && head.length < 256) return;
+      const m = /^rtlfix-conpty (\d+) (\d+) (\d+) (\d+)/.exec(head.subarray(0, Math.max(nl, 0)).toString('latin1'));
+      relay = new Relay({
+        cols: (m && Number(m[3])) || process.stdout.columns,
+        rows: (m && Number(m[4])) || process.stdout.rows,
+        cursor: m ? [Number(m[1]), Number(m[2])] : null,
+        visual,
+        markCells,
+      });
+      chunk = m ? head.subarray(nl + 1) : head;
+      head = null;
+      if (!chunk.length) return;
+    }
+    if (filter) {
+      chunk = filter(chunk);
+      if (!chunk.length) return;
+    }
+    if (hello) {
+      chunk = Buffer.concat([tail, chunk]);
+      const text = chunk.toString('latin1');
+      let from = 0;
+      for (let at = text.indexOf(SIZE); at >= 0; at = text.indexOf(SIZE, from)) {
+        const end = text.indexOf('\x07', at);
+        if (end < 0) break;
+        const [cols, rows] = text.slice(at + SIZE.length, end).split(';').map(Number);
+        const part = chunk.subarray(from, at);
+        if (part.length) render(() => relay.push(part), part);
+        if (cols > 0 && rows > 0) render(() => { relay.resize(cols, rows); return Buffer.alloc(0); }, Buffer.alloc(0));
+        from = end + 1;
+      }
+      let keep = text.lastIndexOf('\x1b');
+      if (keep < from || !(SIZE.startsWith(text.slice(keep)) || (text.startsWith(SIZE, keep) && /^[\d;]*$/.test(text.slice(keep + SIZE.length))))) keep = text.length;
+      tail = chunk.subarray(keep);
+      chunk = chunk.subarray(from, keep);
+    }
+    if (chunk.length) render(() => relay.push(chunk), chunk);
+    later();
+  });
+  process.stdout.on('resize', () => {
+    if (relay && !failed) relay.resize(process.stdout.columns, process.stdout.rows);
+  });
+  return () => {
+    clearTimeout(timer);
+    if (tail.length) render(() => relay.push(tail), tail);
+    if (relay && !failed) {
+      try { write(relay.tick()); } catch { }
+    }
+  };
+}
+
+async function tuiWindows(cmd, env) {
+  const windows = await import('./windows.mjs');
+  const program = windows.findProgram(cmd[0], env);
+  if (!program) {
+    console.error(`rtlfix: ${cmd[0]}: command not found`);
+    process.exit(127);
+  }
+  const direct = { ...windows, program };
+  if (!isatty(0) || !isatty(1)) return runDirect(cmd, env, direct);
+  if (windows.windowsBuild() < 17763) {
+    console.error(`rtlfix tui needs Windows 10 version 1809 or newer; starting ${cmd[0]} without it.`);
+    return runDirect(cmd, env, direct);
+  }
+  let host;
+  try {
+    host = windows.conptyHost(env);
+  } catch (e) {
+    console.error(`rtlfix: ${e.message}; starting ${cmd[0]} without it.`);
+    return runDirect(cmd, env, direct);
+  }
+  const hostEnv = { ...env, RTLFIX_COMMAND: windows.commandLine(program, cmd.slice(1), env) };
+  const library = windows.editorConpty(env);
+  if (library) hostEnv.RTLFIX_CONPTY = library;
+  const child = spawn(host, [], { stdio: ['inherit', 'pipe', 'inherit'], env: hostEnv });
+  child.on('error', (e) => {
+    console.error(`rtlfix: cannot start the pseudo console helper (${e.message}).`);
+    process.exit(1);
+  });
+  const finish = pipeRelay(child, { hello: true, visual: isClaude(cmd), markCells: true });
+  process.stdout.on('error', () => child.kill());
+  for (const sig of ['SIGINT', 'SIGBREAK', 'SIGHUP', 'SIGTERM']) process.on(sig, () => child.kill());
+  child.on('close', (code) => {
+    finish();
+    try { process.stdout.write('\x1b[?9001l\x1b[?1004l'); } catch { }
+    process.exit(code ?? 1);
+  });
 }
 
 export function tuiMain(argv) {
@@ -133,9 +253,22 @@ export function tuiMain(argv) {
     process.exit(cmd.length ? 0 : 1);
   }
   const env = childEnv(cmd);
+  if (process.platform === 'win32') {
+    if (process.env.RTLFIX_TUI) {
+      return import('./windows.mjs').then((windows) => {
+        const program = windows.findProgram(cmd[0], env);
+        if (!program) {
+          console.error(`rtlfix: ${cmd[0]}: command not found`);
+          process.exit(127);
+        }
+        runDirect(cmd, env, { ...windows, program });
+      });
+    }
+    return tuiWindows(cmd, env);
+  }
   if (process.env.RTLFIX_TUI) return runDirect(cmd, env);
   if (process.platform !== 'linux') {
-    console.error(`rtlfix tui needs Linux or WSL; starting ${cmd[0]} without it.`);
+    console.error(`rtlfix tui needs Linux, WSL or Windows; starting ${cmd[0]} without it.`);
     return runDirect(cmd, env);
   }
   if (!process.stdin.isTTY || !process.stdout.isTTY) return runDirect(cmd, env);
@@ -162,33 +295,14 @@ export function tuiMain(argv) {
     process.exit(1);
   });
 
-  const relay = new Relay({ cols: process.stdout.columns, rows: process.stdout.rows, cursor });
-  let failed = false;
   let stopping = null;
-  const write = (buf) => { if (buf.length) process.stdout.write(buf); };
-  const render = (fn, raw) => {
-    if (failed) return write(raw);
-    try {
-      write(fn());
-    } catch {
-      failed = true;
-      write(raw);
-    }
-  };
-
-  let timer = null;
-  child.stdout.on('data', (chunk) => {
-    if (stopping) {
+  const finish = pipeRelay(child, {
+    cursor,
+    filter: (chunk) => {
+      if (!stopping) return chunk;
       const text = chunk.toString('latin1').replace(/\r?\n?Session terminated, killing shell\.\.\.|\s*\.\.\.killed\.\r?\n?/g, '');
-      if (!text) return;
-      chunk = Buffer.from(text, 'latin1');
-    }
-    render(() => relay.push(chunk), chunk);
-    clearTimeout(timer);
-    timer = setTimeout(() => render(() => relay.tick(), Buffer.alloc(0)), 40);
-  });
-  process.stdout.on('resize', () => {
-    if (!failed) relay.resize(process.stdout.columns, process.stdout.rows);
+      return Buffer.from(text, 'latin1');
+    },
   });
   process.stdout.on('error', () => child.kill('SIGTERM'));
 
@@ -208,10 +322,7 @@ export function tuiMain(argv) {
     });
   }
   child.on('close', (code, signal) => {
-    clearTimeout(timer);
-    if (!failed) {
-      try { write(relay.tick()); } catch { }
-    }
+    finish();
     if ((signal || stopping) && saved) {
       try { stty([saved]); } catch { }
     }

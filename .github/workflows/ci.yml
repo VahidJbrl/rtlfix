@@ -22,6 +22,20 @@ jobs:
       - run: node bin/rtlfix.cjs demo
       - run: node bin/rtlfix.cjs doctor
 
+  windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        node: [18, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - run: node bin/rtlfix.cjs demo
+      - run: node bin/rtlfix.cjs doctor
+
   package:
     runs-on: ubuntu-latest
     steps:

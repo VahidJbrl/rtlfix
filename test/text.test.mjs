@@ -89,6 +89,9 @@ test('cli: help, version, demo and errors', () => {
   const bad = spawnSync(process.execPath, [BIN, '--nope'], { encoding: 'utf8' });
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /unknown option --nope/);
+});
+
+test('cli: a reader that stops early ends the output quietly', { skip: process.platform === 'win32' }, () => {
   const head = spawnSync('sh', ['-c', `yes 'سلام دنیا' | head -50000 | "${process.execPath}" "${BIN}" | head -1`], { encoding: 'utf8' });
   assert.equal(head.stderr, '');
   assert.equal(head.stdout, `${vis('دنیا')} ${vis('سلام')}\n`);
