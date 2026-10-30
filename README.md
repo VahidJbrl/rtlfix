@@ -67,7 +67,7 @@ npm install -g --prefix ~/.local github:VahidJbrl/rtlfix
 Without `git`, install the release archive instead:
 
 ```bash
-npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.2.0.tar.gz
+npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.2.1.tar.gz
 ```
 
 **Without npm**

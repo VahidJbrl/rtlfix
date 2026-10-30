@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1 (2026-10-29)
+
+- On Windows, typing a space after Persian text in Claude Code's prompt no longer pushes the text to the left. The text stays where it is and the cursor moves, as on Linux.
+
 ## 1.2.0 (2026-10-29)
 
 Windows support.

@@ -249,3 +249,23 @@ test('where marks take a cell of their own, a right-aligned line leaves room for
   const line = la + '\u064b' + th + m;
   assert.equal(screen(relayed([`${cup(1, 1)}مثلاً`], 20, 2, { markCells: true }), 20, 2).row(1), ' '.repeat(15) + line);
 });
+
+test('Claude Code on Windows: a space typed after Persian keeps the text in place and moves the cursor', () => {
+  const typed = (text, spaces) => frame(`${cup(3, 1)}❯ ${' '.repeat(spaces + 1)}${rev(text)}${cup(3, 3 + [...text].length + spaces)}`);
+  const before = screen(relayed([typed('سلام', 0)], 30, 5, { visual: true }), 30, 5);
+  const after = screen(relayed([typed('سلام', 0), typed('سلام', 1)], 30, 5, { visual: true }), 30, 5);
+  const two = screen(relayed([typed('سلام', 0), typed('سلام', 2)], 30, 5, { visual: true }), 30, 5);
+  assert.ok(before.row(3).endsWith(joined('سلام') + ' ❮'));
+  assert.equal(after.row(3), before.row(3));
+  assert.equal(two.row(3), before.row(3));
+  assert.deepEqual(after.cursor, [3, before.cursor[1] - 1]);
+  assert.deepEqual(two.cursor, [3, before.cursor[1] - 2]);
+});
+
+test('a space typed after Persian keeps the text in place and moves the cursor', () => {
+  const typed = (text) => frame(`${cup(3, 1)}❯ ${text}${cup(3, 3 + [...text].length)}`);
+  const before = screen(relayed([typed('سلام')], 30, 5), 30, 5);
+  const after = screen(relayed([typed('سلام'), typed('سلام ')], 30, 5), 30, 5);
+  assert.equal(after.row(3), before.row(3));
+  assert.deepEqual(after.cursor, [3, before.cursor[1] - 1]);
+});

@@ -1477,7 +1477,7 @@ function leadOf(ch, at, a, b, loose = false) {
 
 function continues(row, x0, cols) {
   const [m0, , b0] = leadOf(row.ch, row.at, 0, cols, true);
-  return m0 < cols && b0 === m0 && (m0 === x0 || m0 === x0 + 1);
+  return m0 < cols && b0 === m0 && m0 >= x0 && m0 <= x0 + 2;
 }
 
 function edgeVote(ch, x, step) {
@@ -1541,9 +1541,9 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, below, 
     let x0 = vb;
     let near = false;
     if (whole && vb > v0) x0 = vj + 1;
-    else if (whole && above && above.shown && above.x0 >= 0 && (vb === above.x0 || vb === above.x0 + 1)) x0 = above.x0;
+    else if (whole && above && above.shown && above.x0 >= 0 && vb >= above.x0) x0 = above.x0;
     else if (whole && vb > 0 && below && continues(below, vb - 1, cols)) { x0 = vb - 1; near = true; }
-    const extra = vb === x0 + 1;
+    const extra = vb > x0;
     const [first, last] = strongEnds(ch, vb, v1);
     const open = first === 0 && last === 1 && !extra;
     let level = first < 0 ? -1 : first === 1 || last === 1 ? 1 : 0;
