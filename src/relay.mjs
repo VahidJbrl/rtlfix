@@ -264,6 +264,7 @@ export class Utf8Decoder {
   }
 }
 
+const INPUT_SEQ = /\x1b(\[|O)(\d*(?:;\d+)?)([CD])|\x1b\[<(\d+);(\d+);(\d+)([Mm])|\x1b\[M([\s\S])([\s\S])([\s\S])/g;
 const PASS = true;
 const DROP = false;
 
@@ -341,6 +342,23 @@ export class Relay {
     const f = this.str ? '' : this._flush();
     if (f) this.tjoin = false;
     return Buffer.from(f, 'utf8');
+  }
+
+  input(buf) {
+    if (!buf.includes(0x1b)) return buf;
+    const row = this.scr[this.y];
+    const flip = Boolean(row && row.shown && row.dir === 1);
+    const column = (x, y) => {
+      const r = y >= 0 && y < this.rows ? this.scr[y] : null;
+      return r && r.shown && r.vmap && x >= 0 && x < this.cols ? r.vmap[x] : x;
+    };
+    const text = buf.toString('latin1').replace(INPUT_SEQ, (m, intro, params, key, b, x, y, end, cb, cx, cy) => {
+      if (key) return flip ? `\x1b${intro}${params}${key === 'C' ? 'D' : 'C'}` : m;
+      if (b !== undefined) return `\x1b[<${b};${column(Number(x) - 1, Number(y) - 1) + 1};${y}${end}`;
+      const nx = column(cx.charCodeAt(0) - 33, cy.charCodeAt(0) - 33) + 33;
+      return nx < 256 ? `\x1b[M${cb}${String.fromCharCode(nx)}${cy}` : m;
+    });
+    return Buffer.from(text, 'latin1');
   }
 
   resize(cols, rows) {
@@ -1391,6 +1409,8 @@ export class Relay {
     const dat = row.at.slice();
     const cmap = new Int16Array(cols + 1);
     for (let x = 0; x <= cols; x++) cmap[x] = x;
+    const vmap = new Int16Array(cols);
+    for (let x = 0; x < cols; x++) vmap[x] = x;
     const cursorX = this.y === y && this.scr[this.y] === row ? this.x : -1;
     let a = 0;
     const below = this.visual && this.scr[y] === row && y + 1 < this.rows ? this.scr[y + 1] : null;
@@ -1402,11 +1422,12 @@ export class Relay {
       if (x < cols && !isColumnRule(row.ch[x])) continue;
       if (x > a) {
         const whole = a === 0 && x === cols;
-        layoutSegment(row, a, x, whole, dch, dat, cmap, cursorX, whole ? above : null, whole ? below : null, cols, this.visual, this.markCells);
+        layoutSegment(row, a, x, whole, dch, dat, cmap, vmap, cursorX, whole ? above : null, whole ? below : null, cols, this.visual, this.markCells);
       }
       a = x + 1;
     }
     row.cmap = cmap;
+    row.vmap = vmap;
     row.cmapX = cursorX;
     const [cells, end] = emitCells(dch, dat, cols);
     row.tlen = end;
@@ -1445,10 +1466,36 @@ const BIDI_FORMAT = (cp) => {
   return (c === L || c === R || c === AL || c >= 14) && isFormatChar(cp);
 };
 
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+export function logicalText(text) {
+  return text.split(/(\r?\n)/).map((part, k) => (k % 2 ? part : logicalLine(part))).join('');
+}
+
+function logicalLine(line) {
+  const g = Array.from(GRAPHEMES.segment(line), (s) => s.segment);
+  if (!g.some((c) => isRtlText(c.codePointAt(0)))) return line;
+  let b = g.length;
+  while (b > 0 && isSpace(g[b - 1])) b--;
+  const [, , a] = leadOf(g, null, 0, b, true);
+  const [first, last] = strongEnds(g, a, b);
+  if (first < 0) return line;
+  let level = first === 1 || last === 1 ? 1 : 0;
+  if (labelEnd(g, null, a, b, true) > 0) level = 0;
+  else if (first === 0 && last === 1 && edgeVote(g, a, 1) + edgeVote(g, b - 1, -1) < 0) level = 0;
+  const levels = resolveLevels(g.slice(a, b).map((c) => c.codePointAt(0)), level, { glue: false });
+  return g.slice(0, a).join('') + visualOrder(levels).map((k) => g[a + k]).join('') + g.slice(b).join('');
+}
+
 function leadOf(ch, at, a, b, loose = false) {
   const base = (x) => (ch[x] === '' ? 0x20 : ch[x].codePointAt(0));
   const blank = (x) => (loose ? isSpace(ch[x]) : blankCell(ch[x], at[x]));
   const markerEnd = (k) => {
+    if (ch[k] === '[') {
+      let c = k + 1;
+      while (c < b && c - k < 80 && ch[c] !== ']' && !isRtlText(base(c))) c++;
+      return c < b && ch[c] === ']' ? c + 1 : k;
+    }
     let e = k;
     while (e < b && !blank(e) && isMarker(base(e))) e++;
     if (e === k && e < b && isDigit(base(e))) {
@@ -1518,26 +1565,30 @@ function toLogical(ch, at, b0, b1, cols, level) {
   for (let x = b0; x < b1; x++) {
     if (ch[x] === '') continue;
     const w = cpWidth(ch[x].codePointAt(0)) === 2 && x + 1 < cols ? 2 : 1;
-    cells.push({ ch: ch[x], at: at[x], w });
+    cells.push({ ch: ch[x], at: at[x], w, x });
     if (w === 2) x++;
   }
   const levels = resolveLevels(cells.map((c) => c.ch.codePointAt(0)), level, { glue: false });
   const nch = ch.slice();
   const nat = at.slice();
+  const org = new Int16Array(cols);
+  for (let k = 0; k < cols; k++) org[k] = k;
   let x = b0;
   for (const k of visualOrder(levels)) {
     const c = cells[k];
     nch[x] = c.ch;
     nat[x] = c.at;
-    if (c.w === 2) { nch[x + 1] = ''; nat[x + 1] = c.at; }
+    org[x] = c.x;
+    if (c.w === 2) { nch[x + 1] = ''; nat[x + 1] = c.at; org[x + 1] = c.x + 1; }
     x += c.w;
   }
-  return [nch, nat];
+  return [nch, nat, org];
 }
 
-function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, below, cols, visual = false, markCells = false) {
+function layoutSegment(row, a, b, whole, dch, dat, cmap, vmap, cursorX, above, below, cols, visual = false, markCells = false) {
   let ch = row.ch;
   let at = row.at;
+  let org = null;
   const base = (x) => (ch[x] === '' ? 0x20 : ch[x].codePointAt(0));
   let [m0, j, b0] = leadOf(ch, at, a, b);
   let b1 = b;
@@ -1563,7 +1614,7 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, below, 
     }
     if (whole) { row.x0 = x0; row.dep = open || near; }
     if (level >= 0) {
-      [ch, at] = toLogical(ch, at, level === 1 && extra ? x0 : vb, v1, cols, level);
+      [ch, at, org] = toLogical(ch, at, level === 1 && extra ? x0 : vb, v1, cols, level);
       [m0, j, b0] = leadOf(ch, at, a, b);
       b1 = b;
       while (b1 > b0 && blankCell(ch[b1 - 1], at[b1 - 1])) b1--;
@@ -1658,6 +1709,22 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, below, 
     if (u.w === 2) { dch[col + 1] = ''; dat[col + 1] = u.at; }
     vis[k] = col;
     col += u.w;
+  }
+
+  let lo = cols;
+  let hi = -1;
+  for (let k = 0; k < units.length; k++) {
+    if (vis[k] < 0) continue;
+    const p = org ? org[units[k].x] : units[k].x;
+    for (let w = 0; w < units[k].w; w++) vmap[vis[k] + w] = p + w;
+    lo = Math.min(lo, vis[k]);
+    hi = Math.max(hi, vis[k] + units[k].w - 1);
+  }
+  if (hi >= 0) {
+    for (let x = from; x < b; x++) {
+      if (x < lo) vmap[x] = vmap[lo];
+      else if (x > hi && pl === 1) vmap[x] = vmap[hi];
+    }
   }
 
   let k = 0;

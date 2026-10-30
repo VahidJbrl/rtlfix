@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0 (2026-10-30)
+
+- On a right-to-left line, the left and right arrow keys move the cursor the way the line is drawn: Right goes back through Persian text and Left goes forward, as in terminals with bidi support. Before, they moved in the agent's left-to-right order, so correcting a typo meant pressing the opposite key.
+- Mouse clicks and selections on right-to-left lines point at the character under the pointer, so Claude Code's own selection highlights what you drag over and copies that text.
+- On Windows, text copied from a mouse selection in Claude Code reaches the clipboard in reading order. Claude Code itself copies it there in display order.
+- Claude Code's prompt chips, such as `[⧉ In file]` for the file open in the editor, no longer make the typed Persian text left to right.
+- To do this, rtlfix now passes the keyboard on to the program itself. On Linux it also keeps the inner terminal's size in step with the window.
+
 ## 1.2.2 (2026-10-29)
 
 - Claude Code's session recap (`※ recap: …`) and other Persian lines that start with a one-word English label, such as `Note:`, are laid out right to left, so they read in the right order. Before, the English label made the whole first line left to right.

@@ -1,6 +1,6 @@
 {
   "name": "rtlfix",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "Persian, Arabic and Hebrew that read correctly in Claude Code, Qwen Code and other terminal programs, in terminals without RTL support such as VS Code's integrated terminal",
   "type": "module",
   "bin": {

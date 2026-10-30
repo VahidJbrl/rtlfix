@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Relay } from '../src/relay.mjs';
+import { Relay, logicalText } from '../src/relay.mjs';
 import { preShapeArabic } from '../src/shaping.mjs';
 
 const ESC = '\x1b';
@@ -285,4 +285,58 @@ test('Claude Code on Windows: the recap line is turned back and reads right to l
   const mixed = screen(relayed([`${cup(1, 1)}※ recap: ${rev('فایل')} config.py ${rev('درست شد')}`], 50, 3, { visual: true }), 50, 3);
   const both = joined('درست شد') + ' config.py ' + joined('فایل') + ' :recap ※';
   assert.equal(mixed.row(1), ' '.repeat(49 - both.length) + both);
+});
+
+const sent = (r, s) => r.input(Buffer.from(s, 'latin1')).toString('latin1');
+
+test('on a right-to-left line the left and right arrow keys swap', () => {
+  const r = new Relay({ cols: 30, rows: 3 });
+  r.push(Buffer.from(`${cup(1, 1)}سلام`));
+  r.tick();
+  assert.equal(sent(r, '\x1b[C'), '\x1b[D');
+  assert.equal(sent(r, '\x1b[D\x1b[1;5C\x1bOD'), '\x1b[C\x1b[1;5D\x1bOC');
+  assert.equal(sent(r, 'ab\x1b[A'), 'ab\x1b[A');
+  const l = new Relay({ cols: 30, rows: 3 });
+  l.push(Buffer.from(`${cup(1, 1)}hello`));
+  l.tick();
+  assert.equal(sent(l, '\x1b[C\x1b[D'), '\x1b[C\x1b[D');
+});
+
+test('a mouse event on a right-to-left line points at the character drawn there', () => {
+  const r = new Relay({ cols: 30, rows: 3 });
+  r.push(Buffer.from(`${cup(1, 1)}سلام${cup(2, 1)}hello`));
+  r.tick();
+  assert.equal(sent(r, '\x1b[<0;29;1M'), '\x1b[<0;1;1M');
+  assert.equal(sent(r, '\x1b[<0;27;1M\x1b[<0;27;1m'), '\x1b[<0;4;1M\x1b[<0;4;1m');
+  assert.equal(sent(r, '\x1b[<0;6;1M'), '\x1b[<0;4;1M');
+  assert.equal(sent(r, '\x1b[<0;3;2M'), '\x1b[<0;3;2M');
+  assert.equal(sent(r, `\x1b[M ${String.fromCharCode(32 + 29)}!`), `\x1b[M ${String.fromCharCode(32 + 1)}!`);
+});
+
+test('Claude Code on Windows: a mouse event points at the cell Claude Code drew', () => {
+  const r = new Relay({ cols: 30, rows: 3, visual: true });
+  r.push(Buffer.from(`${cup(1, 1)}${rev('سلام')}`));
+  r.tick();
+  assert.equal(sent(r, '\x1b[<0;29;1M'), '\x1b[<0;4;1M');
+  assert.equal(sent(r, '\x1b[<0;27;1M'), '\x1b[<0;1;1M');
+});
+
+test('a chip such as [⧉ In file] before the typed text does not decide its direction', () => {
+  const r = new Relay({ cols: 50, rows: 3 });
+  r.push(Buffer.from(`${cup(1, 1)}❯ [⧉ In notes.txt] سلام`));
+  r.tick();
+  assert.equal(sent(r, '\x1b[C'), '\x1b[D');
+  const t = screen(relayed([`${cup(1, 1)}❯ [⧉ In notes.txt] سلام`], 50, 3), 50, 3);
+  assert.ok(t.row(1).endsWith(joined('سلام') + ' [In notes.txt ⧉] ❮'), t.row(1));
+  const w = new Relay({ cols: 50, rows: 3, visual: true });
+  w.push(Buffer.from(`${cup(1, 1)}❯ [⧉ In notes.txt] ${rev('سلام')}`));
+  w.tick();
+  assert.equal(sent(w, '\x1b[C'), '\x1b[D');
+});
+
+test('text that Claude Code on Windows copies in display order is put back in reading order', () => {
+  assert.equal(logicalText(rev('کتابخانه')), 'کتابخانه');
+  assert.equal(logicalText(`● ${rev('سلام دنیا')}\n  ${rev('خوب است')}`), '● سلام دنیا\n  خوب است');
+  assert.equal(logicalText(`Claude ${rev('خوب است')}.`), 'Claude خوب است.');
+  assert.equal(logicalText('plain English text'), 'plain English text');
 });

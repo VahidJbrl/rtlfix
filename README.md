@@ -67,7 +67,7 @@ npm install -g --prefix ~/.local github:VahidJbrl/rtlfix
 Without `git`, install the release archive instead:
 
 ```bash
-npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.2.2.tar.gz
+npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.3.0.tar.gz
 ```
 
 **Without npm**
@@ -130,7 +130,7 @@ keyboard ───────────────────────�
 screen   ◄──────  rtlfix  ◄───────────────────────┘
 ```
 
-- The agent runs in its own pseudo-terminal. Your keystrokes go straight to it, so typing, shortcuts, mouse and paste behave exactly as before.
+- The agent runs in its own pseudo-terminal. Your keystrokes, mouse and paste reach it unchanged, with two exceptions on right-to-left lines: the left and right arrow keys swap, so the cursor moves the way the line is drawn, and mouse clicks and selections point at the character drawn under the pointer.
 - rtlfix keeps a model of the screen that follows xterm.js, the terminal inside VS Code, including its character widths, wrapping, scrolling, scroll regions, the alternate screen, tab stops, line-drawing characters and hyperlinks. It asks the terminal where the cursor is when it starts, so it also works when the agent starts halfway down the screen.
 - Lines without right-to-left text reach your terminal unchanged.
 - Lines that contain Persian, Arabic or Hebrew are redrawn: the [Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) puts them in visual order, letters are replaced by their joined forms, brackets are mirrored, the paragraph is aligned to the right, and the cursor is placed at the visual insertion point. Lines are drawn before they scroll into the scrollback, so long answers read correctly there too.
@@ -163,8 +163,8 @@ No. rtlfix only rewrites the bytes on their way to your screen.
 
 ## Limitations
 
-- Copying with the terminal's own selection copies the joined glyphs in display order, and the terminal's search box cannot find Persian text. To get the original text, copy from the agent itself (for example Claude Code's `/copy`).
-- A mouse click on a right-to-left line lands where the agent's own left-to-right layout has that column.
+- Copying with the terminal's own selection copies the joined glyphs in display order, and the terminal's search box cannot find Persian text. To get the original text, copy from the agent itself: select with the mouse in Claude Code's fullscreen mode, or use `/copy`.
+- On a right-to-left line the arrow keys follow the line's direction; inside an English word on such a line they move the other way, as in most terminals with bidi support.
 - When you make the terminal narrower, VS Code re-wraps the lines already in the scrollback, which can split right-to-left lines there. What is on screen is redrawn correctly.
 - Something an agent draws on top of a line of text, such as a floating hint, is laid out together with that line.
 - Tables keep their left-to-right column order; the text inside each cell is laid out right to left.

@@ -7,7 +7,6 @@ using Microsoft.Win32.SafeHandles;
 
 static class RtlfixConpty
 {
-    const int STD_INPUT_HANDLE = -10;
     const uint ENABLE_WINDOW_INPUT = 0x0008;
     const uint ENABLE_EXTENDED_FLAGS = 0x0080;
     const uint ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
@@ -102,7 +101,6 @@ static class RtlfixConpty
     delegate int ResizeConsole(IntPtr pc, COORD size);
     delegate void CloseConsole(IntPtr pc);
 
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr GetStdHandle(int n);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetConsoleMode(IntPtr h, out uint mode);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetConsoleMode(IntPtr h, uint mode);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetConsoleScreenBufferInfo(IntPtr h, out CONSOLE_SCREEN_BUFFER_INFO info);
@@ -152,7 +150,7 @@ static class RtlfixConpty
             Console.Error.WriteLine("rtlfix: no program to run");
             return 2;
         }
-        input = GetStdHandle(STD_INPUT_HANDLE);
+        input = CreateFileW("CONIN$", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
         screen = CreateFileW("CONOUT$", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
         short cols = 80, rows = 24, row = 0, col = 0;
         CONSOLE_SCREEN_BUFFER_INFO info;
@@ -234,9 +232,15 @@ static class RtlfixConpty
         Thread pump = new Thread(delegate () { Pump(outRead); });
         pump.Start();
         FileStream sink = new FileStream(inWrite, FileAccess.Write, 1);
-        Thread reader = new Thread(delegate () { if (restoreMode) ReadKeys(sink); else Copy(Console.OpenStandardInput(), sink); });
-        reader.IsBackground = true;
-        reader.Start();
+        Thread copier = new Thread(delegate () { Copy(Console.OpenStandardInput(), sink); });
+        copier.IsBackground = true;
+        copier.Start();
+        if (restoreMode)
+        {
+            Thread reader = new Thread(ReadKeys);
+            reader.IsBackground = true;
+            reader.Start();
+        }
         Thread watcher = new Thread(Watch);
         watcher.IsBackground = true;
         watcher.Start();
@@ -324,7 +328,7 @@ static class RtlfixConpty
         catch (IOException) { }
     }
 
-    static void ReadKeys(FileStream sink)
+    static void ReadKeys()
     {
         INPUT_RECORD[] records = new INPUT_RECORD[256];
         StringBuilder text = new StringBuilder();
@@ -358,13 +362,7 @@ static class RtlfixConpty
                 text.Length -= 1;
             }
             if (text.Length == 0) continue;
-            byte[] bytes = Encoding.UTF8.GetBytes(text.ToString());
-            try
-            {
-                sink.Write(bytes, 0, bytes.Length);
-                sink.Flush();
-            }
-            catch (IOException) { return; }
+            Send("\x1b]rtlfix;in;" + BitConverter.ToString(Encoding.UTF8.GetBytes(text.ToString())).Replace("-", "") + "\x07");
         }
     }
 
