@@ -269,3 +269,20 @@ test('a space typed after Persian keeps the text in place and moves the cursor',
   assert.equal(after.row(3), before.row(3));
   assert.deepEqual(after.cursor, [3, before.cursor[1] - 1]);
 });
+
+test('a Persian line after an English label such as recap: reads right to left', () => {
+  const t = screen(relayed([`${cup(1, 1)}※ recap: سلام دنیا`], 40, 3), 40, 3);
+  const line = joined('سلام دنیا') + ' :recap ※';
+  assert.equal(t.row(1), ' '.repeat(39 - line.length) + line);
+  const english = screen(relayed([`${cup(1, 1)}※ recap: fixed the سلام bug`], 40, 3), 40, 3);
+  assert.equal(english.row(1), `※ recap: fixed the ${joined('سلام')} bug`);
+});
+
+test('Claude Code on Windows: the recap line is turned back and reads right to left', () => {
+  const plain = screen(relayed([`${cup(1, 1)}※ recap: ${rev('سلام دنیا')}`], 40, 3, { visual: true }), 40, 3);
+  const line = joined('سلام دنیا') + ' :recap ※';
+  assert.equal(plain.row(1), ' '.repeat(39 - line.length) + line);
+  const mixed = screen(relayed([`${cup(1, 1)}※ recap: ${rev('فایل')} config.py ${rev('درست شد')}`], 50, 3, { visual: true }), 50, 3);
+  const both = joined('درست شد') + ' config.py ' + joined('فایل') + ' :recap ※';
+  assert.equal(mixed.row(1), ' '.repeat(49 - both.length) + both);
+});

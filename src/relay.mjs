@@ -1475,6 +1475,15 @@ function leadOf(ch, at, a, b, loose = false) {
   return [m0, j, b0];
 }
 
+function labelEnd(ch, at, x, b, loose = false) {
+  let k = x;
+  while (k < b && k - x < 24 && ch[k] !== '' && bidiClass(ch[k].codePointAt(0)) === L) k++;
+  if (k === x || k >= b || ch[k] !== ':' || k + 1 >= b || !(loose ? isSpace(ch[k + 1]) : blankCell(ch[k + 1], at[k + 1]))) return -1;
+  k++;
+  while (k < b && (loose ? isSpace(ch[k]) : blankCell(ch[k], at[k]))) k++;
+  return k < b ? k : -1;
+}
+
 function continues(row, x0, cols) {
   const [m0, , b0] = leadOf(row.ch, row.at, 0, cols, true);
   return m0 < cols && b0 === m0 && m0 >= x0 && m0 <= x0 + 2;
@@ -1547,7 +1556,8 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, below, 
     const [first, last] = strongEnds(ch, vb, v1);
     const open = first === 0 && last === 1 && !extra;
     let level = first < 0 ? -1 : first === 1 || last === 1 ? 1 : 0;
-    if (open) {
+    if (level >= 0 && labelEnd(ch, at, vb, v1, true) > 0) level = 0;
+    else if (open) {
       const vote = edgeVote(ch, vb, 1) + edgeVote(ch, v1 - 1, -1);
       level = vote ? (vote > 0 ? 1 : 0) : whole && below && continues(below, x0, cols) ? 0 : 1;
     }
@@ -1572,6 +1582,12 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, cursorX, above, below, 
   }
   if (!rtl) return;
   let pl = paragraphLevel(probe);
+  const text = pl === 0 ? labelEnd(ch, at, b0, b1) : -1;
+  if (text > 0) {
+    const rest = [];
+    for (let x = text; x < b1; x++) if (ch[x] !== '') for (const c of ch[x]) rest.push(c.codePointAt(0));
+    if (paragraphLevel(rest) === 1) pl = 1;
+  }
   if (pl === 0 && above && above.shown && above.dir === 1 && above.b0 === b0) pl = 1;
   if (whole) { row.dir = pl; row.b0 = b0; }
 

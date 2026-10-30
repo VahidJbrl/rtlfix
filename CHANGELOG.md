@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2 (2026-10-29)
+
+- Claude Code's session recap (`※ recap: …`) and other Persian lines that start with a one-word English label, such as `Note:`, are laid out right to left, so they read in the right order. Before, the English label made the whole first line left to right.
+
 ## 1.2.1 (2026-10-29)
 
 - On Windows, typing a space after Persian text in Claude Code's prompt no longer pushes the text to the left. The text stays where it is and the cursor moves, as on Linux.
