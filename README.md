@@ -67,7 +67,7 @@ npm install -g --prefix ~/.local github:VahidJbrl/rtlfix
 Without `git`, install the release archive instead:
 
 ```bash
-npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.4.0.tar.gz
+npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.4.1.tar.gz
 ```
 
 **Without npm**
@@ -140,7 +140,7 @@ screen   ◄──────  rtlfix  ◄────────────�
 
 Claude Code reorders right-to-left text by itself when it detects VS Code, but without joining letters or mirroring brackets, and that result cannot be reordered again reliably. So rtlfix starts Claude Code without the VS Code hint and turns the matching features back on with Claude Code's own documented settings: IDE auto-connect, synchronized output, strikethrough and hyperlinks. Settings you have chosen yourself always win.
 
-On Windows, Claude Code always reorders right-to-left text itself. There rtlfix leaves Claude Code's settings alone and turns each line back into reading order before drawing it. For lines that mix Persian with English, it works out the direction Claude Code used from the way the line was wrapped and from the punctuation at its ends.
+On Windows, Claude Code always reorders right-to-left text itself. There rtlfix leaves Claude Code's settings alone and turns each line back into reading order before drawing it. Claude Code uses the Unicode bidirectional algorithm without mirroring brackets, so rtlfix tries both directions, keeps the reading order that Claude Code would have drawn exactly as it did, and among those prefers the one with brackets, punctuation and percent signs in their usual places. A table row is turned back as a whole, because Claude Code reorders it as one line.
 
 The bidirectional algorithm passes all 862,000 cases of Unicode's official conformance tests (`BidiTest.txt` and `BidiCharacterTest.txt`, Unicode 18.0), and the character widths match xterm.js exactly.
 
@@ -169,7 +169,7 @@ No. rtlfix only rewrites the bytes on their way to your screen.
 - When you make the terminal narrower, VS Code re-wraps the lines already in the scrollback, which can split right-to-left lines there. What is on screen is redrawn correctly.
 - Something an agent draws on top of a line of text, such as a floating hint, is laid out together with that line.
 - Tables keep their left-to-right column order; the text inside each cell is laid out right to left.
-- On Windows, Claude Code has already reordered each line by the time rtlfix sees it. rtlfix works the original order back out, which is reliable for Persian lines and for lines that start or end with English inside a paragraph, but a short line can occasionally come out in the wrong direction.
+- On Windows, Claude Code has already reordered each line by the time rtlfix sees it. rtlfix works the original order back out, but a few lines look exactly the same in both directions, such as `Hello سلام`, or leave open where a number belongs, such as a number between an English and a Persian word. There rtlfix keeps the order Claude Code drew, so such a line may sit on the other side of the window.
 - On Windows, when the terminal itself runs on the console built into Windows, that console gives marks such as the tanvin in «مثلاً» a column of their own. rtlfix leaves room for them, so right-aligned lines with such marks end a few columns short of the edge.
 - Outside VS Code and similar editors, for example in Windows Terminal, rtlfix uses the console host built into Windows. That console counts the Persian half-space (ZWNJ) as a column, which can shift parts of Claude Code's screen when an answer contains half-spaces.
 

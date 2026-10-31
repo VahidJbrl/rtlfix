@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  reorderLine, resolveLevels, resolveClasses, bidiClass, isRtlLetter, paragraphLevel, mirrorOf,
+  reorderLine, resolveLevels, resolveClasses, bidiClass, isRtlLetter, paragraphLevel, mirrorOf, fromVisual, visualOrder,
   R, AL, L, EN, AN, ON, BN, CLASS_NAMES,
 } from '../src/bidi.mjs';
 
@@ -61,4 +61,41 @@ test('character classes come from the Unicode data', () => {
   for (const cp of [0xfb50, 0xfdf2, 0xfe70, 0xfefc]) assert.ok(isRtlLetter(cp), cp.toString(16));
   assert.equal(isRtlLetter('۱'.codePointAt(0)), false);
   assert.equal(isRtlLetter(0xfdff), false);
+});
+
+const rev = (s) => [...s].reverse().join('');
+const shown = (s, pl) => {
+  const cps = [...s].map((c) => c.codePointAt(0));
+  return String.fromCodePoint(...visualOrder(resolveLevels(cps, pl, { glue: false })).map((k) => cps[k]));
+};
+const readBack = (s, pl) => {
+  const cps = [...s].map((c) => c.codePointAt(0));
+  const r = fromVisual(cps, pl);
+  return { text: String.fromCodePoint(...visualOrder(r.levels).map((k) => cps[k])), ok: r.ok, pen: r.pen };
+};
+const worse = (a, b) => !a.ok || a.pen > b.pen;
+
+test('a line put in display order without mirrored brackets is read back', () => {
+  const lines = [
+    [`Goodreads 4.3 · )The Hobbit، 1937( ${rev('کتاب')}`, `${'کتاب'} (The Hobbit، 1937) · Goodreads 4.3`],
+    [`.${rev('هم هستند')} )95%`, '95%) هم هستند.'],
+    [`${rev('دنیا')} %95 ${rev('سلام')}`, 'سلام 95% دنیا'],
+    [`${rev('بعدی')} و )RT 92% / 96% ،2025( 2 ${rev('نسخه')}`, 'نسخه 2 (2025، RT 92% / 96%) و بعدی'],
+    [`${rev('است')} 100$ ${rev('قیمت')}`, 'قیمت $100 است'],
+  ];
+  for (const [visual, logical] of lines) {
+    assert.equal(shown(logical, 1), visual);
+    const back = readBack(visual, 1);
+    assert.deepEqual([back.text, back.ok], [logical, true]);
+    assert.ok(worse(readBack(visual, 0), back), visual);
+  }
+});
+
+test('an English line keeps its order when read back', () => {
+  const visual = `The Hobbit (1937 ،${rev('هابیت')}) · 5 ${rev('از')} 4.3 ${rev('امتیاز')}`;
+  const logical = 'The Hobbit (هابیت، 1937) · امتیاز 4.3 از 5';
+  assert.equal(shown(logical, 0), visual);
+  const back = readBack(visual, 0);
+  assert.deepEqual([back.text, back.ok], [logical, true]);
+  assert.ok(worse(readBack(visual, 1), back));
 });

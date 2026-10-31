@@ -74,6 +74,8 @@ for (let k = 0; k < BRACKETS.length; k += 4) {
 }
 const canon = (cp) => BRACKET_CANON.get(cp) ?? cp;
 
+const LEADS = new Set([0x5f, 0x2d, 0x2e, 0x23, 0x40, 0x7e, 0x2f, 0x5c, 0x24, 0x25]);
+const TRAILS = new Set([0x5f, 0x2d, 0x2f, 0x5c, 0x2b, 0x23, 0x25]);
 const isIsolateInit = (t) => t === LRI || t === RLI || t === FSI;
 const isRemoved = (t) => t === BN || (t >= LRE && t <= PDF);
 const isNeutral = (t) => t === B || t === S || t === WS || t === ON || (t >= LRI && t <= PDI);
@@ -355,6 +357,23 @@ function resolveSequence(seq, initial, types, levels, embed, paraLevel, cps, glu
     }
   }
 
+  if (glue && cps) {
+    const gap = (k) => k < 0 || k >= len || isNeutral(t[k]);
+    for (let k = 0; k < len; k++) {
+      if (t[k] !== ON || !(LEADS.has(cps[seq[k]]) || TRAILS.has(cps[seq[k]]))) continue;
+      let j = k;
+      while (j < len && t[j] === ON && (LEADS.has(cps[seq[j]]) || TRAILS.has(cps[seq[j]]))) j++;
+      let lead = true;
+      let trail = true;
+      for (let m = k; m < j; m++) {
+        lead &&= LEADS.has(cps[seq[m]]);
+        trail &&= TRAILS.has(cps[seq[m]]);
+      }
+      if ((lead && gap(k - 1) && j < len && t[j] === L) || (trail && gap(j) && k > 0 && t[k - 1] === L)) for (let m = k; m < j; m++) t[m] = L;
+      k = j - 1;
+    }
+  }
+
   for (let k = 0; k < len; k++) {
     if (!isNeutral(t[k])) continue;
     let j = k;
@@ -415,4 +434,219 @@ export function reorderLine(line, paraLevel) {
     out += String.fromCodePoint(levels[i] & 1 ? mirrorOf(cps[i]) : cps[i]);
   }
   return out;
+}
+
+const GAPS = new Set([0x20, 0xa0, 0x3000, 0x202f, 0x205f, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a]);
+const STOPS = new Set([0x2c, 0x3b, 0x3a, 0x2e, 0x21, 0x3f, 0x60c, 0x61b, 0x61f]);
+const PROSE = new Set([0x60c, 0x61b, 0x61f]);
+const AFTER_DIGITS = new Set([0x25, 0x66a, 0x2030, 0x2031, 0xb0]);
+const BEFORE_DIGITS = new Set([0x24, 0x20ac, 0xa3, 0xa5, 0x20b9, 0x23]);
+const isDigitCp = (cp) => cp >= 0 && (bidiClass(cp) === EN || bidiClass(cp) === AN);
+
+function pairUp(cps, idx, swapped) {
+  const out = [];
+  const stack = [];
+  const opener = swapped ? CLOSE : OPEN;
+  for (const k of idx) {
+    const cp = cps[k];
+    const bt = BRACKET_TYPE.get(cp);
+    if (bt === opener) {
+      if (stack.length === MAX_BRACKETS) break;
+      stack.push([canon(swapped ? cp : BRACKET_PAIR.get(cp)), k]);
+    } else if (bt) {
+      const want = canon(swapped ? BRACKET_PAIR.get(cp) : cp);
+      for (let s = stack.length - 1; s >= 0; s--) {
+        if (stack[s][0] === want) {
+          out.push([stack[s][1], k]);
+          stack.length = s;
+          break;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function numberRuns(t, p) {
+  const n = t.length;
+  const runs = [];
+  const strongAt = (k) => (t[k] === L || t[k] === R || t[k] === AL ? t[k] : -1);
+  for (let k = 0; k < n; k++) {
+    if (t[k] !== EN || (k > 0 && t[k - 1] === EN)) continue;
+    let b = k + 1;
+    while (b < n && (t[b] === EN || ((t[b] === CS || t[b] === ES) && b + 1 < n && t[b + 1] === EN))) b++;
+    let left = -1;
+    for (let j = k - 1; j >= 0 && left < 0; j--) left = strongAt(j);
+    let right = -1;
+    for (let j = b; j < n && right < 0; j++) right = strongAt(j);
+    let def;
+    let alt;
+    if (p) {
+      def = left === L ? L : right < 0 ? R : right;
+      alt = left === L ? (right < 0 ? R : right) : left;
+    } else {
+      const back = left < 0 ? L : left;
+      def = back === L || right < 0 || right === L ? back : right;
+      alt = right < 0 ? -1 : def === back ? right : back;
+    }
+    runs.push({ a: k, b, def, alt: alt === def ? -1 : alt });
+    k = b - 1;
+  }
+  return runs;
+}
+
+function visualTypes(t0, cps, p, runs, flip, swappedFirst) {
+  const n = t0.length;
+  const e = p ? R : L;
+  const t = Uint8Array.from(t0);
+  const kind = new Int8Array(n).fill(-1);
+  runs.forEach((run, i) => {
+    const pre = flip[i] && run.alt >= 0 ? run.alt : run.def;
+    const k0 = pre === AL ? AN : pre === L ? L : EN;
+    for (let k = run.a; k < run.b; k++) {
+      if (t[k] !== EN) continue;
+      kind[k] = k0;
+      if (k0 === AN) t[k] = AN;
+    }
+  });
+  for (let k = 0; k < n; k++) if (t[k] === AL) t[k] = R;
+  for (let k = 1; k < n - 1; k++) {
+    if (t[k] !== ES && t[k] !== CS) continue;
+    if (t[k - 1] === EN && t[k + 1] === EN) { t[k] = EN; kind[k] = kind[k - 1]; }
+    else if (t[k] === CS && t[k - 1] === AN && t[k + 1] === AN) t[k] = AN;
+  }
+  for (let k = 0; k < n; k++) {
+    if (t[k] !== ET) continue;
+    let j = k;
+    while (j < n && t[j] === ET) j++;
+    const from = k > 0 && t[k - 1] === EN ? k - 1 : j < n && t[j] === EN ? j : -1;
+    if (from >= 0) for (let m = k; m < j; m++) { t[m] = EN; kind[m] = kind[from]; }
+    k = j - 1;
+  }
+  for (let k = 0; k < n; k++) {
+    if (t[k] === ES || t[k] === ET || t[k] === CS) t[k] = ON;
+    else if (t[k] === EN && kind[k] === L) t[k] = L;
+  }
+  const idx = [];
+  for (let k = 0; k < n; k++) if (t[k] === ON && BRACKET_TYPE.has(cps[k])) idx.push(k);
+  const first = pairUp(cps, idx, swappedFirst);
+  const used = new Set(first.flat());
+  const second = pairUp(cps, idx.filter((k) => !used.has(k)), !swappedFirst);
+  const swapped = swappedFirst ? first : second;
+  const normal = (swappedFirst ? second : first).sort((x, y) => x[0] - y[0]);
+  for (const [o, c] of swapped) t[o] = t[c] = R;
+  for (const [o, c] of normal) {
+    let foundE = false;
+    let foundOpp = false;
+    for (let k = o + 1; k < c && !foundE; k++) {
+      const d = strongDir(t[k]);
+      if (d === e) foundE = true;
+      else if (d !== -1) foundOpp = true;
+    }
+    if (!foundE && !foundOpp) continue;
+    let dir = e;
+    if (!foundE) {
+      for (let k = o - 1; k >= 0; k--) {
+        const d = strongDir(t[k]);
+        if (d !== -1) { dir = d; break; }
+      }
+    }
+    t[o] = t[c] = dir;
+  }
+  for (let k = 0; k < n; k++) {
+    if (!isNeutral(t[k])) continue;
+    let j = k;
+    while (j < n && isNeutral(t[j])) j++;
+    const lead = k === 0 ? e : strongDir(t[k - 1]);
+    const trail = j === n ? e : strongDir(t[j]);
+    const dir = lead === trail ? lead : e;
+    for (let m = k; m < j; m++) t[m] = dir;
+    k = j - 1;
+  }
+  const levels = new Uint8Array(n);
+  for (let k = 0; k < n; k++) {
+    const c = t[k];
+    levels[k] = p ? (c === R ? 1 : 2) : c === R ? 1 : c === L ? 0 : 2;
+  }
+  return levels;
+}
+
+function oddness(cps) {
+  const n = cps.length;
+  let pen = n && (GAPS.has(cps[0]) || STOPS.has(cps[0])) ? 1 : 0;
+  const open = [];
+  for (let i = 0; i < n; i++) {
+    const c = cps[i];
+    const prev = i > 0 ? cps[i - 1] : -1;
+    const next = i + 1 < n ? cps[i + 1] : -1;
+    if (STOPS.has(c)) {
+      const glued = next >= 0 && !GAPS.has(next) && !STOPS.has(next) && BRACKET_TYPE.get(next) !== CLOSE;
+      if (GAPS.has(prev) && (glued || PROSE.has(c))) pen++;
+      else if (PROSE.has(c) && glued && !(isDigitCp(prev) && isDigitCp(next))) pen++;
+    }
+    if (AFTER_DIGITS.has(c) && isDigitCp(next) && !isDigitCp(prev)) pen++;
+    if (BEFORE_DIGITS.has(c) && isDigitCp(prev) && !isDigitCp(next)) pen++;
+    const bt = BRACKET_TYPE.get(c);
+    if (bt === OPEN) {
+      open.push(canon(BRACKET_PAIR.get(c)));
+      if (GAPS.has(next)) pen++;
+    } else if (bt === CLOSE) {
+      if (GAPS.has(prev)) pen++;
+      const o = open.lastIndexOf(canon(c));
+      if (o >= 0) open.splice(o, 1);
+      else if (cps.some((x, j) => j > i && BRACKET_TYPE.get(x) === OPEN && canon(BRACKET_PAIR.get(x)) === canon(c))) pen++;
+    }
+  }
+  return pen;
+}
+
+function tryVisual(cps, t0, p, runs, flip, swappedFirst) {
+  const levels = visualTypes(t0, cps, p, runs, flip, swappedFirst);
+  const order = visualOrder(levels);
+  const text = order.map((k) => cps[k]);
+  let ok = Math.max(0, firstStrong(classesOf(text), 0, text.length)) === p && firstStrong(t0, 0, t0.length) >= 0;
+  if (ok) {
+    const back = visualOrder(resolveLevels(text, p, { glue: false }));
+    for (let j = 0; j < back.length && ok; j++) ok = order[back[j]] === j;
+  }
+  let flips = swappedFirst === (p === 1) ? 0 : 1;
+  for (const f of flip) flips += f;
+  return { levels, key: text.join(','), ok, pen: oddness(text), flips, flip, swappedFirst };
+}
+
+const better = (a, b) => (a.ok !== b.ok ? a.ok : a.pen !== b.pen ? a.pen < b.pen : a.flips < b.flips);
+
+export function fromVisual(cps, p) {
+  const t0 = classesOf(cps);
+  for (let k = 0; k < t0.length; k++) {
+    if (t0[k] === BN) t0[k] = ON;
+    else if (t0[k] === NSM) t0[k] = k ? t0[k - 1] : p ? R : L;
+  }
+  const runs = numberRuns(t0, p);
+  const open = [];
+  runs.forEach((run, i) => { if (run.alt >= 0) open.push(i); });
+  const both = cps.some((cp) => BRACKET_TYPE.has(cp)) ? [p === 1, p !== 1] : [p === 1];
+  let top = null;
+  for (const swappedFirst of both) {
+    let cur = tryVisual(cps, t0, p, runs, runs.map(() => 0), swappedFirst);
+    for (let round = 0, moved = true; moved && round < 3; round++) {
+      moved = false;
+      for (const i of open) {
+        const flip = cur.flip.slice();
+        flip[i] ^= 1;
+        const next = tryVisual(cps, t0, p, runs, flip, swappedFirst);
+        if (better(next, cur)) { cur = next; moved = true; }
+      }
+    }
+    if (!top || better(cur, top)) top = cur;
+  }
+  let ambiguous = !top.ok;
+  for (const i of open) {
+    if (ambiguous) break;
+    const flip = top.flip.slice();
+    flip[i] ^= 1;
+    const next = tryVisual(cps, t0, p, runs, flip, top.swappedFirst);
+    ambiguous = next.ok && next.pen === top.pen && next.key !== top.key;
+  }
+  return { levels: top.levels, ok: top.ok, pen: top.pen, ambiguous };
 }

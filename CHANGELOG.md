@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.1 (2026-10-31)
+
+- On Windows, lines that mix Persian with English, numbers and brackets come out in the right order. Claude Code reorders each line with the Unicode bidirectional algorithm but leaves brackets unmirrored, and rtlfix used to misread that: a list title such as `کتاب (The Hobbit، 1937) · Goodreads 4.3` came out left to right with its brackets turned around, and `95%)` turned into `(%95`. rtlfix now tries both directions, keeps the reading order that Claude Code would have drawn exactly as it did, and among those prefers the one with brackets, punctuation and percent signs in their usual places.
+- On Windows, tables in Claude Code's answers keep their columns. Claude Code reorders a table row as one line, so a Persian header or a wrapped Persian cell swapped the cells and moved the `│` between them. rtlfix now turns such a row back as a whole.
+- A table cell that continues on the next line keeps the direction of its first line.
+- An underscore, dash, slash or similar sign at the start or end of an English word stays with the word in right-to-left text, so `_old_versions`, `C++`, `C#` and paths such as `C:\Users\` read as written.
+
 ## 1.4.0 (2026-10-31)
 
 - macOS support. `rtlfix claude`, `rtlfix qwen` and `rtlfix tui` run the program in a pseudo-terminal with the `script` that comes with macOS, for example in VS Code's terminal. `rtlfix doctor` checks it.

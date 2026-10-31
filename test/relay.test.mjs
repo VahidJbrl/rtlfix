@@ -251,11 +251,11 @@ test('where marks take a cell of their own, a right-aligned line leaves room for
 });
 
 test('Claude Code on Windows: a space typed after Persian keeps the text in place and moves the cursor', () => {
-  const typed = (text, spaces) => frame(`${cup(3, 1)}❯ ${' '.repeat(spaces + 1)}${rev(text)}${cup(3, 3 + [...text].length + spaces)}`);
+  const typed = (text, spaces) => frame(`${cup(3, 1)}❯\u00a0${' '.repeat(spaces + 1)}${rev(text)}${cup(3, 3 + [...text].length + spaces)}`);
   const before = screen(relayed([typed('سلام', 0)], 30, 5, { visual: true }), 30, 5);
   const after = screen(relayed([typed('سلام', 0), typed('سلام', 1)], 30, 5, { visual: true }), 30, 5);
   const two = screen(relayed([typed('سلام', 0), typed('سلام', 2)], 30, 5, { visual: true }), 30, 5);
-  assert.ok(before.row(3).endsWith(joined('سلام') + ' ❮'));
+  assert.ok(before.row(3).endsWith(joined('سلام') + '\u00a0❮'));
   assert.equal(after.row(3), before.row(3));
   assert.equal(two.row(3), before.row(3));
   assert.deepEqual(after.cursor, [3, before.cursor[1] - 1]);
@@ -339,6 +339,40 @@ test('text that Claude Code on Windows copies in display order is put back in re
   assert.equal(logicalText(`● ${rev('سلام دنیا')}\n  ${rev('خوب است')}`), '● سلام دنیا\n  خوب است');
   assert.equal(logicalText(`Claude ${rev('خوب است')}.`), 'Claude خوب است.');
   assert.equal(logicalText('plain English text'), 'plain English text');
+  assert.equal(logicalText(`Goodreads 4.3 · )The Hobbit، 1937( ${rev('کتاب')}`), 'کتاب (The Hobbit، 1937) · Goodreads 4.3');
+  assert.equal(logicalText(`│ app.py   │ ${rev('فایل اصلی')} (main) ${rev('برنامه')} │`), '│ app.py   │ فایل اصلی (main) برنامه │');
+  assert.equal(logicalText(rev('│ نام      │ توضیح    │')), '│ نام      │ توضیح    │');
+});
+
+test('Claude Code on Windows: a list title with brackets it did not mirror reads right to left', () => {
+  const bytes = `${cup(1, 1)}  1. Goodreads 4.3 · )The Hobbit، 1937( ${rev('کتاب')}${cup(2, 1)}     ${rev('داستانی درباره سفر')}`;
+  const t = screen(relayed([bytes], 60, 3, { visual: true }), 60, 3);
+  const line = `Goodreads 4.3 · (The Hobbit، 1937) ${joined('کتاب')} .1`;
+  assert.equal(t.row(1), ' '.repeat(57 - line.length) + line);
+});
+
+test('Claude Code on Windows: a percent sign stays with its number', () => {
+  const t = screen(relayed([`${cup(1, 1)}  .${rev('هم هستند')} )95%`], 40, 2, { visual: true }), 40, 2);
+  const line = `.${joined('هم هستند')} (95%`;
+  assert.equal(t.row(1), ' '.repeat(37 - line.length) + line);
+});
+
+test('Claude Code on Windows: a table row it turned around as a whole goes back into its columns', () => {
+  const top = '┌──────────┬─────────────────────────┐';
+  const sep = '├──────────┼─────────────────────────┤';
+  const bot = '└──────────┴─────────────────────────┘';
+  const head = rev('│ نام      │ توضیح                   │');
+  const row = `│ app.py   │ ${rev('فایل اصلی')} (main) ${rev('برنامه')} │`;
+  const t = screen(relayed([`${cup(1, 1)}${top}${cup(2, 1)}${head}${cup(3, 1)}${sep}${cup(4, 1)}${row}${cup(5, 1)}${bot}`], 50, 6, { visual: true }), 50, 6);
+  assert.equal(t.row(2), `│      ${joined('نام')} │                   ${joined('توضیح')} │`);
+  assert.equal(t.row(4), `│ app.py   │ ${joined('برنامه')} (main) ${joined('فایل اصلی')} │`);
+  assert.equal(t.row(5), bot);
+});
+
+test('a leading underscore and the signs of C++ and C# stay with their words', () => {
+  const t = screen(relayed([`${cup(1, 1)}از _old و C++ و C# استفاده کن`], 40, 2), 40, 2);
+  const line = `${joined('استفاده کن')} C# ${joined('و')} C++ ${joined('و')} _old ${joined('از')}`;
+  assert.equal(t.row(1), ' '.repeat(39 - line.length) + line);
 });
 
 const visualOf = (r, y, l) => Array.from(r.scr[y].lmap).indexOf(l);
