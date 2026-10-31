@@ -409,7 +409,7 @@ test('Claude Code on Windows: Persian typed after an English word reads right to
 
 test('Claude Code on Windows: a number between an English name and Persian goes where it belongs', () => {
   const t = screen(relayed([`${cup(1, 1)}  - Mary Smith 2025 ${rev('در')} Python ${rev('را یاد گرفت')}.`], 60, 2, { visual: true }), 60, 2);
-  const line = `.${joined('را یاد گرفت')} Python 2025 ${joined('در')} Mary Smith -`;
+  const line = `.${joined('را یاد گرفت')} 2025 Python ${joined('در')} Mary Smith -`;
   assert.equal(t.row(1), ' '.repeat(57 - line.length) + line);
 });
 
@@ -419,7 +419,21 @@ test('Claude Code on Windows: a Persian table cell that starts with an English w
   const bot = '└──────────┴────────────────────────────────────┘';
   const row = '│ 03_Bills │' + ` PDF 10 ${rev('قسط')} ${rev('آخرین')} ،${rev('فاکتور')} June 2026`.padEnd(36) + '│';
   const t = screen(relayed([`${cup(1, 1)}${top}${cup(2, 1)}${sep}${cup(3, 1)}${row}${cup(4, 1)}${bot}`], 52, 5, { visual: true }), 52, 5);
-  assert.equal(t.row(3), `│ 03_Bills │ June 2026 10 ${joined('قسط')} ${joined('آخرین')} ،${joined('فاکتور')} PDF │`);
+  assert.equal(t.row(3), `│ 03_Bills │ 10 June 2026 ${joined('قسط')} ${joined('آخرین')} ،${joined('فاکتور')} PDF │`);
+});
+
+test('a number stays in front of the English words that follow it, as in a street address', () => {
+  const line = `${joined('را ببینید')} 12 E Main St ${joined('آدرس')}`;
+  const linux = screen(relayed([`${cup(1, 1)}  آدرس 12 E Main St را ببینید`], 50, 2), 50, 2);
+  assert.equal(linux.row(1), ' '.repeat(47 - line.length) + line);
+  const windows = screen(relayed([`${cup(1, 1)}  ${rev('را ببینید')} E Main St 12 ${rev('آدرس')}`], 50, 2, { visual: true }), 50, 2);
+  assert.equal(windows.row(1), ' '.repeat(47 - line.length) + line);
+});
+
+test('Claude Code on Windows: a number after an English name stays after it', () => {
+  const t = screen(relayed([`${cup(1, 1)}  .Misc ۴ و Notes ۱، Photos ۲ ،۱ ${rev('پوشه اصلی')}`], 60, 2, { visual: true }), 60, 2);
+  const line = `.Misc ۴ ${joined('و')} Notes ۱، Photos ۲ ،۱ ${joined('پوشه اصلی')}`;
+  assert.equal(t.row(1), ' '.repeat(57 - line.length) + line);
 });
 
 test('a leading underscore and the signs of C++ and C# stay with their words', () => {

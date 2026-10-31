@@ -107,6 +107,10 @@ test('a number between English and Persian is read back where it belongs', () =>
     [`Python 3.12 ${rev('بهتر از')} Java ${rev('است')}`, 'Python 3.12 بهتر از Java است', 0],
     [`UTF-8 ${rev('را همین حالا فعال کنید')}.`, 'UTF-8 را همین حالا فعال کنید.', 0],
     [`.${rev('برسد')} Nov 30 ${rev('بسته باید تا')}`, 'بسته باید تا Nov 30 برسد.', 1],
+    [`${rev('را ببینید')} E Main St 12 ${rev('آدرس')}`, 'آدرس 12 E Main St را ببینید', 1],
+    [`${rev('است')} Green Lot 1 ${rev('پارکینگ')}`, 'پارکینگ Green Lot 1 است', 1],
+    [`.Misc ۴ و Notes ۱، Photos ۲ ،۱ ${rev('پوشه اصلی')}`, 'پوشه اصلی ۱، Notes ۱، Photos ۲ و Misc ۴.', 1],
+    [`.${rev('آمد')} Linux ${rev('برای')} Windows 11 ${rev('نسخه')}`, 'نسخه Windows 11 برای Linux آمد.', 1],
   ];
   for (const [visual, logical, pl] of lines) {
     assert.equal(shown(logical, pl), visual);

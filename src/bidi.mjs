@@ -358,6 +358,13 @@ function resolveSequence(seq, initial, types, levels, embed, paraLevel, cps, glu
   }
 
   if (glue && cps) {
+    for (let k = 0; k < len && e === R; k++) {
+      if (t[k] !== EN && t[k] !== AN) continue;
+      let j = k;
+      while (j < len && (t[j] === EN || t[j] === AN)) j++;
+      if (j + 1 < len && initial[seq[j]] === WS && t[j + 1] === L) for (let m = k; m <= j; m++) t[m] = L;
+      k = j;
+    }
     const gap = (k) => k < 0 || k >= len || isNeutral(t[k]);
     for (let k = 0; k < len; k++) {
       if (t[k] !== ON || !(LEADS.has(cps[seq[k]]) || TRAILS.has(cps[seq[k]]))) continue;
@@ -448,7 +455,8 @@ const MONTHS = words('january february march april may june july august septembe
   'jan feb mar apr jun jul aug sep sept oct nov dec ' +
   '\u0641\u0631\u0648\u0631\u062f\u06cc\u0646 \u0627\u0631\u062f\u06cc\u0628\u0647\u0634\u062a \u062e\u0631\u062f\u0627\u062f \u062a\u06cc\u0631 \u0645\u0631\u062f\u0627\u062f \u0634\u0647\u0631\u06cc\u0648\u0631 ' +
   '\u0645\u0647\u0631 \u0622\u0628\u0627\u0646 \u0622\u0630\u0631 \u062f\u06cc \u0628\u0647\u0645\u0646 \u0627\u0633\u0641\u0646\u062f');
-const COUNT_WORDS = words('\u062d\u062f\u0648\u062f \u062a\u0627 \u0628\u06cc\u0646 \u0637\u06cc \u062d\u062f\u0627\u0642\u0644 \u062d\u062f\u0627\u06a9\u062b\u0631 \u0633\u0627\u0644');
+const COUNT_WORDS = words('\u062d\u062f\u0648\u062f \u062a\u0627 \u0628\u06cc\u0646 \u0637\u06cc \u062d\u062f\u0627\u0642\u0644 \u062d\u062f\u0627\u06a9\u062b\u0631 \u0633\u0627\u0644 \u0622\u062f\u0631\u0633');
+const LEAD_WORDS = words('n s e w ne nw se sw am pm gb mb kb tb km kg ms');
 const YEAR_WORDS = words('\u062f\u0631 \u0627\u0632 \u0628\u0647 \u0628\u0627 \u0628\u0631\u0627\u06cc');
 const UNITS = words('\u0631\u0627 \u0631\u0648\u0632 \u0633\u0627\u0644 \u0645\u0627\u0647 \u0647\u0641\u062a\u0647 \u0633\u0627\u0639\u062a \u062f\u0642\u06cc\u0642\u0647 \u0633\u0647\u0645 \u0646\u0641\u0631 \u0628\u0627\u0631 \u062f\u0631\u0635\u062f \u062f\u0644\u0627\u0631 \u062a\u0648\u0645\u0627\u0646 \u0647\u0632\u0627\u0631 \u0645\u06cc\u0644\u06cc\u0648\u0646');
 const scriptOf = (cp) => {
@@ -486,7 +494,7 @@ function numberHints(cps) {
     if (MONTHS.has(before)) bonus += 4;
     else if (MONTHS.has(after)) bonus += 2;
     if (COUNT_WORDS.has(before) || (year && YEAR_WORDS.has(before))) bonus++;
-    if (UNITS.has(after)) bonus++;
+    if (UNITS.has(after) || LEAD_WORDS.has(after)) bonus++;
     if (dotted && before && scriptOf(before.codePointAt(0)) === L) bonus++;
     k = b - 1;
   }
@@ -658,16 +666,18 @@ function tryVisual(cps, t0, p, runs, flip, swappedFirst) {
   const order = visualOrder(levels);
   const text = order.map((k) => cps[k]);
   let ok = Math.max(0, firstStrong(classesOf(text), 0, text.length)) === p && firstStrong(t0, 0, t0.length) >= 0;
+  let kept = false;
   if (ok) {
     const back = visualOrder(resolveLevels(text, p, { glue: false }));
     for (let j = 0; j < back.length && ok; j++) ok = order[back[j]] === j;
+    if (ok) kept = visualOrder(resolveLevels(text, p)).every((k, j) => order[k] === j);
   }
   let flips = swappedFirst === (p === 1) ? 0 : 1;
   for (const f of flip) flips += f;
-  return { levels, ok, pen: oddness(text), flips, flip, swappedFirst };
+  return { levels, ok, pen: oddness(text), kept, flips, flip, swappedFirst };
 }
 
-const better = (a, b) => (a.ok !== b.ok ? a.ok : a.pen !== b.pen ? a.pen < b.pen : a.flips < b.flips);
+const better = (a, b) => (a.ok !== b.ok ? a.ok : a.pen !== b.pen ? a.pen < b.pen : a.kept !== b.kept ? a.kept : a.flips < b.flips);
 
 export function fromVisual(cps, p) {
   const t0 = classesOf(cps);
@@ -682,14 +692,16 @@ export function fromVisual(cps, p) {
   let top = null;
   for (const swappedFirst of both) {
     let cur = tryVisual(cps, t0, p, runs, runs.map(() => 0), swappedFirst);
-    for (let round = 0, moved = true; moved && round < 3; round++) {
-      moved = false;
+    for (let round = 0; round <= 2 * open.length; round++) {
+      let best = cur;
       for (const i of open) {
         const flip = cur.flip.slice();
         flip[i] ^= 1;
         const next = tryVisual(cps, t0, p, runs, flip, swappedFirst);
-        if (better(next, cur)) { cur = next; moved = true; }
+        if (better(next, best)) best = next;
       }
+      if (best === cur) break;
+      cur = best;
     }
     if (!top || better(cur, top)) top = cur;
   }

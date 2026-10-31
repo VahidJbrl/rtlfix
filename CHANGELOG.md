@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.4 (2026-10-31)
+
+Numbers in front of English words.
+
+- In Persian text, a number in front of English words stays in front of them, so `آدرس 12 E Main St` reads `12 E Main St` instead of `E Main St 12`, and a date reads `10 June 2026`.
+- On Windows, where Claude Code has already reordered the line, this happens when the words around the number make it clear, such as `آدرس`, a month, `W` or `GB`. Otherwise the line stays as Claude Code drew it.
+
 ## 1.4.3 (2026-10-31)
 
 - On Windows, clicking a letter in Claude Code's prompt puts the cursor on that letter in Persian text too. Before, a click on Persian landed on the mirrored position.
