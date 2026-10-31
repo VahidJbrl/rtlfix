@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { childEnv, launcher, programArgs, isClaude } from '../src/tui.mjs';
+import { preShapeArabic } from '../src/shaping.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/rtlfix.cjs', import.meta.url));
 const hasScript = process.platform === 'linux' &&
@@ -89,4 +90,25 @@ test('without a terminal a program found by its path runs with its arguments', (
 test('inside rtlfix, rtlfix runs the program directly', () => {
   const r = spawnSync(process.execPath, [BIN, 'tui', process.execPath, '-e', 'console.log(process.env.RTLFIX_TUI)'], { encoding: 'utf8', input: '', env: { ...process.env, RTLFIX_TUI: '1' } });
   assert.equal(r.stdout.trim(), '1');
+});
+
+function inPty(command) {
+  const args = process.platform === 'darwin' ? ['-q', '/dev/null', '/bin/sh', '-c', command] : ['-q', '-e', '-c', command, '/dev/null'];
+  return new Promise((resolve) => {
+    const p = spawn('script', args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, SHELL: '/bin/sh', RTLFIX_TEST: 'سلام' } });
+    let stdout = '';
+    let stderr = '';
+    p.stdout.on('data', (d) => { stdout += d; });
+    p.stderr.on('data', (d) => { stderr += d; });
+    const timer = setTimeout(() => p.kill('SIGKILL'), 30000);
+    p.on('close', (status) => { clearTimeout(timer); resolve({ status, stdout, stderr }); });
+  });
+}
+
+test('in a terminal the program gets its own pseudo-terminal and Persian is drawn', { skip: !(hasScript || process.platform === 'darwin') }, async () => {
+  const r = await inPty(`stty rows 24 cols 80; "${process.execPath}" "${BIN}" tui sh -c 'stty size; printf "%s\\n" "$RTLFIX_TEST"; exit 3'`);
+  assert.equal(r.status, 3, `${r.stderr}\n${r.stdout}`);
+  assert.match(r.stdout, /24 80/);
+  assert.ok(r.stdout.includes([...preShapeArabic('سلام')].reverse().join('')), r.stdout);
+  assert.ok(!r.stdout.includes('rtlfix;tty'));
 });

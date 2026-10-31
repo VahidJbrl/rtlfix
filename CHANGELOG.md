@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0 (2026-10-31)
+
+- macOS support. `rtlfix claude`, `rtlfix qwen` and `rtlfix tui` run the program in a pseudo-terminal with the `script` that comes with macOS, for example in VS Code's terminal. `rtlfix doctor` checks it.
+- The inner terminal's size and the programs that receive signals are now found through the terminal itself instead of Linux's `/proc`, so the same code runs on Linux and macOS.
+
 ## 1.3.1 (2026-10-31)
 
 - On Windows, a mouse selection across several right-to-left lines follows the reading order: it covers the end of the first line and the start of the last, and copies that text in order. Claude Code's own selection follows its display order on Windows, so rtlfix now draws drag selections itself there; clicks, double-clicks and the scroll wheel still go to Claude Code.

@@ -1,5 +1,6 @@
 import { spawn, execFileSync } from 'node:child_process';
-import { readSync, writeSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
+import { readSync, writeSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { constants } from 'node:os';
 import { isatty } from 'node:tty';
 import { Relay, logicalText } from './relay.mjs';
@@ -35,7 +36,7 @@ export function launcher(cmd) {
     `set -- ${cmd.map(shQuote).join(' ')}`,
     'if [ -n "${RTLFIX_SHELL+x}" ]; then SHELL=$RTLFIX_SHELL; export SHELL; else unset SHELL; fi',
     'unset RTLFIX_SHELL',
-    'if [ -n "${RTLFIX_SIZE+x}" ]; then stty $RTLFIX_SIZE 2>/dev/null; stty iutf8 2>/dev/null; unset RTLFIX_SIZE; fi',
+    'if [ -n "${RTLFIX_SIZE+x}" ]; then stty $RTLFIX_SIZE 2>/dev/null; stty iutf8 2>/dev/null; printf "\\033]rtlfix;tty;%s;%s\\007" "$(tty)" "$$"; unset RTLFIX_SIZE; fi',
     'command -v "$1" >/dev/null 2>&1 || { echo "rtlfix: $1: command not found" >&2; exit 127; }',
     'set -m',
     'exec 3>&2 2>/dev/null',
@@ -69,35 +70,16 @@ function works(file, args) {
   }
 }
 
-function jobsOf(pid) {
+function jobsOn(tty, leader) {
   try {
-    const leaders = new Set(readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim().split(/\s+/).filter(Boolean).map(Number));
-    const groups = new Set();
-    for (const name of readdirSync('/proc')) {
-      if (!/^\d+$/.test(name)) continue;
-      try {
-        const stat = readFileSync(`/proc/${name}/stat`, 'utf8');
-        const f = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-        const pgrp = Number(f[2]);
-        const sid = Number(f[3]);
-        if (leaders.has(sid) && pgrp !== sid) groups.add(pgrp);
-      } catch { }
-    }
-    return [...groups];
+    const out = execFileSync('ps', ['-t', tty.replace(/^\/dev\//, ''), '-o', 'pgid='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return [...new Set(out.split(/\s+/).filter(Boolean).map(Number))].filter((g) => g > 0 && g !== leader);
   } catch {
     return [];
   }
 }
 
-function ptyOf(pid) {
-  try {
-    for (const kid of readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim().split(/\s+/).filter(Boolean)) {
-      const tty = readlinkSync(`/proc/${kid}/fd/0`);
-      if (tty.startsWith('/dev/pts/')) return tty;
-    }
-  } catch { }
-  return null;
-}
+const onPath = (name) => (process.env.PATH || '').split(':').some((dir) => dir && existsSync(join(dir, name)));
 
 function stty(args) {
   return execFileSync('stty', args, { stdio: ['inherit', 'pipe', 'ignore'], encoding: 'utf8' }).trim();
@@ -165,7 +147,7 @@ function fixClipboard(from, to) {
   } catch { }
 }
 
-function pipeRelay(child, { cursor, hello = false, filter = null, visual = false, markCells = false } = {}) {
+function pipeRelay(child, { cursor, hello = false, filter = null, visual = false, markCells = false, onTty = null } = {}) {
   let relay = hello ? null : new Relay({ cols: process.stdout.columns, rows: process.stdout.rows, cursor, visual });
   let head = Buffer.alloc(0);
   let tail = Buffer.alloc(0);
@@ -303,26 +285,25 @@ function pipeRelay(child, { cursor, hello = false, filter = null, visual = false
       chunk = filter(chunk);
       if (!chunk.length) return;
     }
-    if (hello) {
-      chunk = Buffer.concat([tail, chunk]);
-      const text = chunk.toString('latin1');
-      let from = 0;
-      for (let at = text.indexOf(NOTE); at >= 0; at = text.indexOf(NOTE, from)) {
-        const end = text.indexOf('\x07', at);
-        if (end < 0) break;
-        const [kind, a, b] = text.slice(at + NOTE.length, end).split(';');
-        const part = fixCopies(chunk.subarray(from, at));
-        if (part.length) render(() => relay.push(part), part);
-        if (kind === 'size' && Number(a) > 0 && Number(b) > 0) render(() => { relay.resize(Number(a), Number(b)); return Buffer.alloc(0); }, Buffer.alloc(0));
-        if (kind === 'in' && a) child.stdin.write(input(Buffer.from(a, 'hex')));
-        from = end + 1;
-      }
-      let keep = text.lastIndexOf('\x1b');
-      const rest = keep < from ? '' : text.slice(keep);
-      if (!rest || !(NOTE.startsWith(rest) || (rest.startsWith(NOTE) && !rest.includes('\x07')))) keep = text.length;
-      tail = chunk.subarray(keep);
-      chunk = chunk.subarray(from, keep);
+    chunk = Buffer.concat([tail, chunk]);
+    const text = chunk.toString('latin1');
+    let from = 0;
+    for (let at = text.indexOf(NOTE); at >= 0; at = text.indexOf(NOTE, from)) {
+      const end = text.indexOf('\x07', at);
+      if (end < 0) break;
+      const [kind, a, b] = text.slice(at + NOTE.length, end).split(';');
+      const part = fixCopies(chunk.subarray(from, at));
+      if (part.length) render(() => relay.push(part), part);
+      if (kind === 'size' && Number(a) > 0 && Number(b) > 0) render(() => { relay.resize(Number(a), Number(b)); return Buffer.alloc(0); }, Buffer.alloc(0));
+      if (kind === 'in' && a) child.stdin.write(input(Buffer.from(a, 'hex')));
+      if (kind === 'tty' && a && onTty) onTty(a, Number(b));
+      from = end + 1;
     }
+    let keep = text.lastIndexOf('\x1b');
+    const rest = keep < from ? '' : text.slice(keep);
+    if (!rest || !(NOTE.startsWith(rest) || (rest.startsWith(NOTE) && !rest.includes('\x07')))) keep = text.length;
+    tail = chunk.subarray(keep);
+    chunk = chunk.subarray(from, keep);
     chunk = fixCopies(chunk);
     if (chunk.length) render(() => relay.push(chunk), chunk);
     later();
@@ -403,15 +384,23 @@ export function tuiMain(argv) {
     return tuiWindows(cmd, env);
   }
   if (process.env.RTLFIX_TUI) return runDirect(cmd, env);
-  if (process.platform !== 'linux') {
-    console.error(`rtlfix tui needs Linux, WSL or Windows; starting ${cmd[0]} without it.`);
+  const mac = process.platform === 'darwin';
+  if (process.platform !== 'linux' && !mac) {
+    console.error(`rtlfix tui needs Linux, macOS, WSL or Windows; starting ${cmd[0]} without it.`);
     return runDirect(cmd, env);
   }
   if (!process.stdin.isTTY || !process.stdout.isTTY) return runDirect(cmd, env);
-  const version = quiet('script', ['--version']);
-  if (!version || !version.includes('util-linux')) {
-    console.error(`rtlfix tui needs "script" from util-linux${version === null ? '' : ' (this one is not)'}; starting ${cmd[0]} without it.`);
-    return runDirect(cmd, env);
+  if (mac) {
+    if (!onPath('script') || !existsSync('/bin/bash')) {
+      console.error(`rtlfix tui needs "script", which comes with macOS in /usr/bin; starting ${cmd[0]} without it.`);
+      return runDirect(cmd, env);
+    }
+  } else {
+    const version = quiet('script', ['--version']);
+    if (!version || !version.includes('util-linux')) {
+      console.error(`rtlfix tui needs "script" from util-linux${version === null ? '' : ' (this one is not)'}; starting ${cmd[0]} without it.`);
+      return runDirect(cmd, env);
+    }
   }
 
   let saved = null;
@@ -422,10 +411,13 @@ export function tuiMain(argv) {
   delete scriptEnv.RTLFIX_SHELL;
   if (process.env.SHELL !== undefined) scriptEnv.RTLFIX_SHELL = process.env.SHELL;
   const scriptArgs = ['-q', '-e', '-c', launcher(cmd), '/dev/null'];
-  const [file, args] = works('setpriv', ['--pdeathsig', 'TERM', 'true'])
-    ? ['setpriv', ['--pdeathsig', 'TERM', 'script', ...scriptArgs]]
-    : ['script', scriptArgs];
+  const [file, args] = mac
+    ? ['/bin/bash', ['-c', 'exec script -q /dev/null /bin/sh -c "$1" < <(exec cat)', 'rtlfix', launcher(cmd)]]
+    : works('setpriv', ['--pdeathsig', 'TERM', 'true'])
+      ? ['setpriv', ['--pdeathsig', 'TERM', 'script', ...scriptArgs]]
+      : ['script', scriptArgs];
   const child = spawn(file, args, { stdio: ['pipe', 'pipe', 'inherit'], env: scriptEnv });
+  const keys = child.stdin;
   child.on('error', (e) => {
     if (saved) try { stty([saved]); } catch { }
     console.error(`rtlfix tui: cannot start "script" from util-linux (${e.message}).`);
@@ -434,8 +426,11 @@ export function tuiMain(argv) {
   try { stty(['raw', '-echo']); } catch { }
 
   let stopping = null;
+  let tty = null;
+  let leader = 0;
   const io = pipeRelay(child, {
     cursor,
+    onTty: (path, pid) => { tty = path; leader = pid; },
     filter: (chunk) => {
       if (!stopping) return chunk;
       const text = chunk.toString('latin1').replace(/\r?\n?Session terminated, killing shell\.\.\.|\s*\.\.\.killed\.\r?\n?/g, '');
@@ -443,13 +438,11 @@ export function tuiMain(argv) {
     },
   });
   process.stdout.on('error', () => child.kill('SIGTERM'));
-  child.stdin.on('error', () => { });
-  process.stdin.on('data', (data) => child.stdin.write(io.input(data)));
-  let tty = null;
+  keys.on('error', () => { });
+  process.stdin.on('data', (data) => keys.write(io.input(data)));
   process.stdout.on('resize', () => {
-    tty ??= ptyOf(child.pid);
     if (!tty) return;
-    try { execFileSync('stty', ['-F', tty, 'rows', String(process.stdout.rows), 'cols', String(process.stdout.columns)], { stdio: 'ignore' }); } catch { }
+    try { execFileSync('stty', [mac ? '-f' : '-F', tty, 'rows', String(process.stdout.rows), 'cols', String(process.stdout.columns)], { stdio: 'ignore' }); } catch { }
   });
 
   for (const sig of ['SIGTERM', 'SIGHUP', 'SIGINT']) {
@@ -457,7 +450,7 @@ export function tuiMain(argv) {
       const first = !stopping;
       stopping ??= sig;
       let sent = false;
-      for (const pgrp of jobsOf(child.pid)) {
+      for (const pgrp of tty ? jobsOn(tty, leader) : []) {
         try { process.kill(-pgrp, sig); sent = true; } catch { }
       }
       if (!sent) child.kill('SIGTERM');

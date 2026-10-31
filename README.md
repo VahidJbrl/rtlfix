@@ -11,7 +11,7 @@ and every other terminal that cannot draw right-to-left text.
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 18+](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)](https://nodejs.org)
 ![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)
-![Linux, WSL and Windows](https://img.shields.io/badge/platform-Linux%20%7C%20WSL%20%7C%20Windows-lightgrey.svg)
+![Linux, macOS, WSL and Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL%20%7C%20Windows-lightgrey.svg)
 
 <img src="docs/before-after.png" alt="The same Claude Code conversation in VS Code's terminal, without rtlfix (letters not joined, brackets flipped, everything on the left) and with rtlfix (joined letters, right-to-left layout, mirrored brackets, cursor where you type)" width="880">
 
@@ -24,7 +24,7 @@ npm install -g github:VahidJbrl/rtlfix
 rtlfix claude
 ```
 
-That's all, on Linux, WSL and Windows. Use `rtlfix qwen` for Qwen Code, or `rtlfix tui <program>` for any other terminal program.
+That's all, on Linux, macOS, WSL and Windows. Use `rtlfix qwen` for Qwen Code, or `rtlfix tui <program>` for any other terminal program.
 
 Not sure whether your terminal needs it? Run `rtlfix demo`.
 
@@ -67,7 +67,7 @@ npm install -g --prefix ~/.local github:VahidJbrl/rtlfix
 Without `git`, install the release archive instead:
 
 ```bash
-npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.3.1.tar.gz
+npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.4.0.tar.gz
 ```
 
 **Without npm**
@@ -86,7 +86,7 @@ This puts rtlfix in `~/.local/share/rtlfix` and the `rtlfix` command in `~/.loca
 npx github:VahidJbrl/rtlfix claude
 ```
 
-**Requirements:** Node.js 18 or newer, and on Linux or WSL `script` from util-linux, which most distributions include. On Windows, Windows 10 version 1809 or newer; nothing else is needed. `rtlfix doctor` checks all of this. Claude Code's own installer does not need Node.js, but rtlfix does; older distributions ship an older Node.js than 18, so get a current one from [nodejs.org](https://nodejs.org) or with nvm.
+**Requirements:** Node.js 18 or newer, and on Linux or WSL `script` from util-linux, which most distributions include. On macOS nothing else is needed, since rtlfix uses the `script` that comes with it. On Windows, Windows 10 version 1809 or newer; nothing else is needed. `rtlfix doctor` checks all of this. Claude Code's own installer does not need Node.js, but rtlfix does; older distributions ship an older Node.js than 18, so get a current one from [nodejs.org](https://nodejs.org) or with nvm.
 
 **Update** by running the same install command again. **Uninstall** with `npm uninstall -g rtlfix` (add `--prefix ~/.local` if you installed it that way), or `rtlfix uninstall` if you installed it without npm. On Windows, install and uninstall with npm.
 
@@ -98,7 +98,7 @@ npx github:VahidJbrl/rtlfix claude
 | `rtlfix qwen [args...]` | The same for Qwen Code |
 | `rtlfix tui <program> [args...]` | Any other terminal program, with its own arguments |
 | `rtlfix demo` | Shows whether this terminal needs rtlfix |
-| `rtlfix doctor` | Checks Node.js, util-linux and which agents are installed |
+| `rtlfix doctor` | Checks Node.js, what rtlfix needs on this system and which agents are installed |
 | `rtlfix "text"` or `… \| rtlfix` | Prints text ready for this terminal, e.g. `qwen -p "سلام" \| rtlfix` |
 
 To use it every time you open an agent in VS Code, add aliases to `~/.bashrc` (or `~/.zshrc`):
@@ -136,7 +136,7 @@ screen   ◄──────  rtlfix  ◄────────────�
 - Lines that contain Persian, Arabic or Hebrew are redrawn: the [Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) puts them in visual order, letters are replaced by their joined forms, brackets are mirrored, the paragraph is aligned to the right, and the cursor is placed at the visual insertion point. Lines are drawn before they scroll into the scrollback, so long answers read correctly there too.
 - It only changes what is displayed. What you type, the conversation history and what the model sees stay exactly as they are.
 - Window resizes, Ctrl+Z and closing the terminal are handled; when the terminal closes, the agent closes with it.
-- On Windows, a small pseudo console helper takes the place of `script`. It is written in C# and built on first use with the compiler that comes with Windows, then kept in `%LOCALAPPDATA%\rtlfix`. In VS Code, Cursor and similar editors it uses the console host the editor ships with, which passes the agent's output through exactly as written.
+- On macOS, rtlfix uses the `script` that comes with macOS. On Windows, a small pseudo console helper takes the place of `script`. It is written in C# and built on first use with the compiler that comes with Windows, then kept in `%LOCALAPPDATA%\rtlfix`. In VS Code, Cursor and similar editors it uses the console host the editor ships with, which passes the agent's output through exactly as written.
 
 Claude Code reorders right-to-left text by itself when it detects VS Code, but without joining letters or mirroring brackets, and that result cannot be reordered again reliably. So rtlfix starts Claude Code without the VS Code hint and turns the matching features back on with Claude Code's own documented settings: IDE auto-connect, synchronized output, strikethrough and hyperlinks. Settings you have chosen yourself always win.
 
@@ -155,8 +155,8 @@ The terminal's font has no Arabic glyphs. Add a font that has them, for example 
 **I typed `rtlfix ls` and it printed a hint.**
 Text mode prints the words you give it. To run a program, use `rtlfix tui ls`; `claude` and `qwen` have their own shortcuts.
 
-**Does it work on Windows or macOS?**
-On Windows, yes: natively in PowerShell or the command prompt, for example in VS Code's terminal, and inside WSL. On macOS, `rtlfix tui` is not available yet; text mode (`rtlfix "text"`) works everywhere Node.js runs.
+**Does it work on Windows and macOS?**
+Yes, natively: on macOS in VS Code's terminal and other terminals without right-to-left support, and on Windows in PowerShell or the command prompt, for example in VS Code's terminal. It also works inside WSL. Text mode (`rtlfix "text"`) works everywhere Node.js runs.
 
 **Does it change what the model reads?**
 No. rtlfix only rewrites the bytes on their way to your screen.

@@ -174,9 +174,15 @@ export async function doctor(argv = []) {
     const editor = windows.editorConpty();
     info('console', editor ? `from the editor, ${dirname(editor)}` : 'the one built into Windows');
     find = (name) => windows.findProgram(name);
+  } else if (process.platform === 'darwin') {
+    let version = '';
+    try { version = execFileSync('sw_vers', ['-productVersion'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { }
+    ok(true, 'system', `macOS ${version}`.trim());
+    const script = which('script');
+    ok(Boolean(script), 'script', script || 'not found (it comes with macOS in /usr/bin)');
   } else {
     const linux = process.platform === 'linux';
-    ok(linux, 'system', linux ? 'Linux' : `${process.platform} (rtlfix tui needs Linux, WSL or Windows)`);
+    ok(linux, 'system', linux ? 'Linux' : `${process.platform} (rtlfix tui needs Linux, macOS, WSL or Windows)`);
     let script = null;
     try {
       script = execFileSync('script', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
