@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.2 (2026-10-31)
+
+Persian sentences that start with an English word.
+
+- A Persian line, list item or table cell that starts with an English word, such as `Python را نصب کنید.`, reads right to left. English sentences with a Persian word, and code, keep their direction.
+- On Windows, numbers next to English words land where they belong, for example in `Python 3.12` and `10 June 2026`.
+- On Windows, Persian typed after an English word in Claude Code's prompt reads right to left while you type.
+
 ## 1.4.1 (2026-10-31)
 
 Fixes for Persian mixed with English in Claude Code on Windows.

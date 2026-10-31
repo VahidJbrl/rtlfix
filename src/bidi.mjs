@@ -442,6 +442,56 @@ const PROSE = new Set([0x60c, 0x61b, 0x61f]);
 const AFTER_DIGITS = new Set([0x25, 0x66a, 0x2030, 0x2031, 0xb0]);
 const BEFORE_DIGITS = new Set([0x24, 0x20ac, 0xa3, 0xa5, 0x20b9, 0x23]);
 const isDigitCp = (cp) => cp >= 0 && (bidiClass(cp) === EN || bidiClass(cp) === AN);
+const LINKS = new Set([0x2d, 0x5f, 0x2f, 0x5c, 0x2e, 0x3a, 0x2b]);
+const words = (list) => new Set(list.split(' '));
+const MONTHS = words('january february march april may june july august september october november december ' +
+  'jan feb mar apr jun jul aug sep sept oct nov dec ' +
+  '\u0641\u0631\u0648\u0631\u062f\u06cc\u0646 \u0627\u0631\u062f\u06cc\u0628\u0647\u0634\u062a \u062e\u0631\u062f\u0627\u062f \u062a\u06cc\u0631 \u0645\u0631\u062f\u0627\u062f \u0634\u0647\u0631\u06cc\u0648\u0631 ' +
+  '\u0645\u0647\u0631 \u0622\u0628\u0627\u0646 \u0622\u0630\u0631 \u062f\u06cc \u0628\u0647\u0645\u0646 \u0627\u0633\u0641\u0646\u062f');
+const COUNT_WORDS = words('\u062d\u062f\u0648\u062f \u062a\u0627 \u0628\u06cc\u0646 \u0637\u06cc \u062d\u062f\u0627\u0642\u0644 \u062d\u062f\u0627\u06a9\u062b\u0631 \u0633\u0627\u0644');
+const YEAR_WORDS = words('\u062f\u0631 \u0627\u0632 \u0628\u0647 \u0628\u0627 \u0628\u0631\u0627\u06cc');
+const UNITS = words('\u0631\u0627 \u0631\u0648\u0632 \u0633\u0627\u0644 \u0645\u0627\u0647 \u0647\u0641\u062a\u0647 \u0633\u0627\u0639\u062a \u062f\u0642\u06cc\u0642\u0647 \u0633\u0647\u0645 \u0646\u0641\u0631 \u0628\u0627\u0631 \u062f\u0631\u0635\u062f \u062f\u0644\u0627\u0631 \u062a\u0648\u0645\u0627\u0646 \u0647\u0632\u0627\u0631 \u0645\u06cc\u0644\u06cc\u0648\u0646');
+const scriptOf = (cp) => {
+  if (cp < 0) return -1;
+  const c = bidiClass(cp);
+  return c === L ? L : c === R || c === AL ? R : -1;
+};
+
+function wordAt(cps, k, step) {
+  const out = [];
+  while (k >= 0 && k < cps.length && scriptOf(cps[k]) >= 0) {
+    out.push(cps[k]);
+    k += step;
+  }
+  if (step < 0) out.reverse();
+  return String.fromCodePoint(...out).toLowerCase();
+}
+
+function numberHints(cps) {
+  const n = cps.length;
+  let bonus = 0;
+  for (let k = 0; k < n; k++) {
+    if (!isDigitCp(cps[k]) || (k > 0 && isDigitCp(cps[k - 1]))) continue;
+    let b = k + 1;
+    let dotted = false;
+    while (b < n && (isDigitCp(cps[b]) || (STOPS.has(cps[b]) && b + 1 < n && isDigitCp(cps[b + 1])))) {
+      if (cps[b] === 0x2e) dotted = true;
+      b++;
+    }
+    const year = b - k === 4 && (cps[k] === 0x31 || cps[k] === 0x32);
+    const before = k >= 2 && GAPS.has(cps[k - 1]) ? wordAt(cps, k - 2, -1) : '';
+    let a = b;
+    if (a < n && cps[a] === 0x2c) a++;
+    const after = a + 1 < n && GAPS.has(cps[a]) ? wordAt(cps, a + 1, 1) : '';
+    if (MONTHS.has(before)) bonus += 4;
+    else if (MONTHS.has(after)) bonus += 2;
+    if (COUNT_WORDS.has(before) || (year && YEAR_WORDS.has(before))) bonus++;
+    if (UNITS.has(after)) bonus++;
+    if (dotted && before && scriptOf(before.codePointAt(0)) === L) bonus++;
+    k = b - 1;
+  }
+  return bonus;
+}
 
 function pairUp(cps, idx, swapped) {
   const out = [];
@@ -489,7 +539,8 @@ function numberRuns(t, p) {
       def = back === L || right < 0 || right === L ? back : right;
       alt = right < 0 ? -1 : def === back ? right : back;
     }
-    runs.push({ a: k, b, def, alt: alt === def ? -1 : alt });
+    const glued = (k > 0 && t[k - 1] === L) || (b < n && t[b] === L);
+    runs.push({ a: k, b, def, alt: alt === def || glued ? -1 : alt });
     k = b - 1;
   }
   return runs;
@@ -574,11 +625,13 @@ function visualTypes(t0, cps, p, runs, flip, swappedFirst) {
 function oddness(cps) {
   const n = cps.length;
   let pen = n && (GAPS.has(cps[0]) || STOPS.has(cps[0])) ? 1 : 0;
+  pen -= numberHints(cps);
   const open = [];
   for (let i = 0; i < n; i++) {
     const c = cps[i];
     const prev = i > 0 ? cps[i - 1] : -1;
     const next = i + 1 < n ? cps[i + 1] : -1;
+    if (LINKS.has(c) && scriptOf(prev) >= 0 && scriptOf(next) >= 0 && scriptOf(prev) !== scriptOf(next)) pen++;
     if (STOPS.has(c)) {
       const glued = next >= 0 && !GAPS.has(next) && !STOPS.has(next) && BRACKET_TYPE.get(next) !== CLOSE;
       if (GAPS.has(prev) && (glued || PROSE.has(c))) pen++;
@@ -611,7 +664,7 @@ function tryVisual(cps, t0, p, runs, flip, swappedFirst) {
   }
   let flips = swappedFirst === (p === 1) ? 0 : 1;
   for (const f of flip) flips += f;
-  return { levels, key: text.join(','), ok, pen: oddness(text), flips, flip, swappedFirst };
+  return { levels, ok, pen: oddness(text), flips, flip, swappedFirst };
 }
 
 const better = (a, b) => (a.ok !== b.ok ? a.ok : a.pen !== b.pen ? a.pen < b.pen : a.flips < b.flips);
@@ -640,13 +693,41 @@ export function fromVisual(cps, p) {
     }
     if (!top || better(cur, top)) top = cur;
   }
-  let ambiguous = !top.ok;
-  for (const i of open) {
-    if (ambiguous) break;
-    const flip = top.flip.slice();
-    flip[i] ^= 1;
-    const next = tryVisual(cps, t0, p, runs, flip, top.swappedFirst);
-    ambiguous = next.ok && next.pen === top.pen && next.key !== top.key;
+  return { levels: top.levels, ok: top.ok, pen: top.pen };
+}
+
+const CODE = new Set([0x3d, 0x3b, 0x7b, 0x7d, 0x3c, 0x3e]);
+
+export function leansRtl(cps) {
+  let rWords = 0;
+  let lWords = 0;
+  let rLetters = 0;
+  let lLetters = 0;
+  let last = -1;
+  let prev = -1;
+  let quoted = false;
+  for (let k = 0; k < cps.length; k++) {
+    const cp = cps[k];
+    const c = bidiClass(cp);
+    if (cp === 0x22 || cp === 0x60 || (cp === 0x27 && !(scriptOf(cps[k - 1] ?? -1) >= 0 && scriptOf(cps[k + 1] ?? -1) >= 0))) {
+      quoted = !quoted;
+      prev = -1;
+      continue;
+    }
+    if (quoted) continue;
+    if (CODE.has(cp)) return false;
+    if (c === NSM || c === BN) continue;
+    const d = c === L ? L : c === R || c === AL ? R : -1;
+    if (d === L) {
+      lLetters++;
+      if (prev !== L) lWords++;
+    } else if (d === R) {
+      rLetters++;
+      if (prev !== R) rWords++;
+    }
+    if (d >= 0) last = d;
+    prev = d;
   }
-  return { levels: top.levels, ok: top.ok, pen: top.pen, ambiguous };
+  if (!rLetters) return false;
+  return rWords >= lWords || (last === R && 2 * rLetters >= lLetters);
 }

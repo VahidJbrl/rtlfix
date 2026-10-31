@@ -1,4 +1,4 @@
-import { isRtlLetter, paragraphLevel, resolveLevels, visualOrder, mirrorOf } from './bidi.mjs';
+import { isRtlLetter, paragraphLevel, resolveLevels, visualOrder, mirrorOf, leansRtl } from './bidi.mjs';
 import { shapeCps } from './shaping.mjs';
 import { cpWidth } from './width.mjs';
 
@@ -130,7 +130,7 @@ export function transformLine(line, { mode = 'visual', state = newState(), level
   let pl = 0;
   if (mode !== 'logical') {
     const cps = cells.map((c) => c.cp);
-    pl = level ?? paragraphLevel(cps);
+    pl = level ?? (paragraphLevel(cps) || (leansRtl(cps) ? 1 : 0));
     const levels = resolveLevels(cps, pl);
     order = visualOrder(levels);
     for (let k = 0; k < cells.length; k++) {

@@ -19,6 +19,11 @@ test('every line takes its own direction', () => {
   assert.equal(out[4], 'hello world');
 });
 
+test('a Persian line that starts with an English word reads right to left', () => {
+  assert.equal(visualText('Python یک زبان است'), `${vis('است')} ${vis('زبان')} ${vis('یک')} Python`);
+  assert.equal(visualText('Hello سلام world'), `Hello ${vis('سلام')} world`);
+});
+
 test('Windows line endings and text without RTL letters are kept', () => {
   assert.equal(visualText('سلام\r\nدنیا\r\n'), `${vis('سلام')}\r\n${vis('دنیا')}\r\n`);
   const s = 'plain (text) with [brackets]\n';

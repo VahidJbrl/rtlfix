@@ -67,7 +67,7 @@ npm install -g --prefix ~/.local github:VahidJbrl/rtlfix
 Without `git`, install the release archive instead:
 
 ```bash
-npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.4.1.tar.gz
+npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.4.2.tar.gz
 ```
 
 **Without npm**
@@ -133,14 +133,14 @@ screen   ◄──────  rtlfix  ◄────────────�
 - The agent runs in its own pseudo-terminal. Your keystrokes, mouse and paste reach it unchanged, with two exceptions on right-to-left lines: the left and right arrow keys swap, so the cursor moves the way the line is drawn, and mouse clicks and selections point at the character drawn under the pointer.
 - rtlfix keeps a model of the screen that follows xterm.js, the terminal inside VS Code, including its character widths, wrapping, scrolling, scroll regions, the alternate screen, tab stops, line-drawing characters and hyperlinks. It asks the terminal where the cursor is when it starts, so it also works when the agent starts halfway down the screen.
 - Lines without right-to-left text reach your terminal unchanged.
-- Lines that contain Persian, Arabic or Hebrew are redrawn: the [Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) puts them in visual order, letters are replaced by their joined forms, brackets are mirrored, the paragraph is aligned to the right, and the cursor is placed at the visual insertion point. Lines are drawn before they scroll into the scrollback, so long answers read correctly there too.
+- Lines that contain Persian, Arabic or Hebrew are redrawn: the [Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) puts them in visual order, letters are replaced by their joined forms, brackets are mirrored, the paragraph is aligned to the right, and the cursor is placed at the visual insertion point. A line that is mostly Persian reads right to left even when it starts with an English word; English sentences and code keep their direction. Lines are drawn before they scroll into the scrollback, so long answers read correctly there too.
 - It only changes what is displayed. What you type, the conversation history and what the model sees stay exactly as they are.
 - Window resizes, Ctrl+Z and closing the terminal are handled; when the terminal closes, the agent closes with it.
 - On macOS, rtlfix uses the `script` that comes with macOS. On Windows, a small pseudo console helper takes the place of `script`. It is written in C# and built on first use with the compiler that comes with Windows, then kept in `%LOCALAPPDATA%\rtlfix`. In VS Code, Cursor and similar editors it uses the console host the editor ships with, which passes the agent's output through exactly as written.
 
 Claude Code reorders right-to-left text by itself when it detects VS Code, but without joining letters or mirroring brackets, and that result cannot be reordered again reliably. So rtlfix starts Claude Code without the VS Code hint and turns the matching features back on with Claude Code's own documented settings: IDE auto-connect, synchronized output, strikethrough and hyperlinks. Settings you have chosen yourself always win.
 
-On Windows, Claude Code always reorders right-to-left text itself. There rtlfix leaves Claude Code's settings alone and turns each line back into reading order before drawing it. Claude Code uses the Unicode bidirectional algorithm without mirroring brackets, so rtlfix tries both directions, keeps the reading order that Claude Code would have drawn exactly as it did, and among those prefers the one with brackets, punctuation and percent signs in their usual places. A table row is turned back as a whole, because Claude Code reorders it as one line.
+On Windows, Claude Code always reorders right-to-left text itself. There rtlfix leaves Claude Code's settings alone and turns each line back into reading order before drawing it. Claude Code uses the Unicode bidirectional algorithm without mirroring brackets, so rtlfix tries both directions, keeps the reading order that Claude Code would have drawn exactly as it did, and among those prefers the one with brackets, punctuation, percent signs and dates in their usual places. A table row is turned back as a whole, because Claude Code reorders it as one line.
 
 The bidirectional algorithm passes all 862,000 cases of Unicode's official conformance tests (`BidiTest.txt` and `BidiCharacterTest.txt`, Unicode 18.0), and the character widths match xterm.js exactly.
 
@@ -169,7 +169,7 @@ No. rtlfix only rewrites the bytes on their way to your screen.
 - When you make the terminal narrower, VS Code re-wraps the lines already in the scrollback, which can split right-to-left lines there. What is on screen is redrawn correctly.
 - Something an agent draws on top of a line of text, such as a floating hint, is laid out together with that line.
 - Tables keep their left-to-right column order; the text inside each cell is laid out right to left.
-- On Windows, Claude Code has already reordered each line by the time rtlfix sees it. rtlfix works the original order back out, but a few lines look exactly the same in both directions, such as `Hello سلام`, or leave open where a number belongs, such as a number between an English and a Persian word. There rtlfix keeps the order Claude Code drew, so such a line may sit on the other side of the window.
+- On Windows, Claude Code has already reordered each line by the time rtlfix sees it, and rtlfix works the original order back out. A few short lines look exactly the same either way, such as `Hello سلام`; for those rtlfix goes by what the line held a moment before, so typing works, but a line that appears all at once can still come out the other way round.
 - On Windows, when the terminal itself runs on the console built into Windows, that console gives marks such as the tanvin in «مثلاً» a column of their own. rtlfix leaves room for them, so right-aligned lines with such marks end a few columns short of the edge.
 - Outside VS Code and similar editors, for example in Windows Terminal, rtlfix uses the console host built into Windows. That console counts the Persian half-space (ZWNJ) as a column, which can shift parts of Claude Code's screen when an answer contains half-spaces.
 

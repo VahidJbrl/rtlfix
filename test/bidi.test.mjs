@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  reorderLine, resolveLevels, resolveClasses, bidiClass, isRtlLetter, paragraphLevel, mirrorOf, fromVisual, visualOrder,
+  reorderLine, resolveLevels, resolveClasses, bidiClass, isRtlLetter, paragraphLevel, mirrorOf, fromVisual, visualOrder, leansRtl,
   R, AL, L, EN, AN, ON, BN, CLASS_NAMES,
 } from '../src/bidi.mjs';
 
@@ -98,4 +98,25 @@ test('an English line keeps its order when read back', () => {
   const back = readBack(visual, 0);
   assert.deepEqual([back.text, back.ok], [logical, true]);
   assert.ok(worse(readBack(visual, 1), back));
+});
+
+test('a number between English and Persian is read back where it belongs', () => {
+  const lines = [
+    [`Mary Smith 2025 ${rev('در')} Python ${rev('را یاد گرفت')}.`, 'Mary Smith در 2025 Python را یاد گرفت.', 0],
+    [`PDF 10 ${rev('قسط')} ${rev('آخرین')} ،${rev('فاکتور')} June 2026`, 'PDF فاکتور، آخرین قسط 10 June 2026', 0],
+    [`Python 3.12 ${rev('بهتر از')} Java ${rev('است')}`, 'Python 3.12 بهتر از Java است', 0],
+    [`UTF-8 ${rev('را همین حالا فعال کنید')}.`, 'UTF-8 را همین حالا فعال کنید.', 0],
+    [`.${rev('برسد')} Nov 30 ${rev('بسته باید تا')}`, 'بسته باید تا Nov 30 برسد.', 1],
+  ];
+  for (const [visual, logical, pl] of lines) {
+    assert.equal(shown(logical, pl), visual);
+    const back = readBack(visual, pl);
+    assert.deepEqual([back.text, back.ok], [logical, true]);
+  }
+});
+
+test('a Persian line that starts with an English word leans right to left, English and code do not', () => {
+  const lean = (s) => leansRtl([...s].map((c) => c.codePointAt(0)));
+  for (const s of ['Python یک زبان ساده است', 'Node 18 برای Linux Mint الان Stable است.', 'VS Code ممکن است کند شود:']) assert.ok(lean(s), s);
+  for (const s of ['The word for hello is سلام', 'Hello سلام world', 'print("سلام دنیا")', 'x = 1  # مقدار اولیه']) assert.ok(!lean(s), s);
 });

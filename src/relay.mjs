@@ -1,5 +1,5 @@
 import {
-  bidiClass, isRtlLetter, resolveLevels, visualOrder, mirrorOf, paragraphLevel, bracketType, fromVisual,
+  bidiClass, isRtlLetter, resolveLevels, visualOrder, mirrorOf, paragraphLevel, bracketType, fromVisual, leansRtl,
   L, R, AL, EN, ET, ES, AN, ON,
 } from './bidi.mjs';
 import { shapeCps } from './shaping.mjs';
@@ -148,6 +148,8 @@ class Row {
     this.wrapped = wrapped;
     this.tlen = 0;
     this.segs = null;
+    this.seen = -1;
+    this.prior = null;
   }
 
   resize(cols, keep = false) {
@@ -325,6 +327,8 @@ export class Relay {
     this.over = false;
     this.run = false;
     this.history = [];
+    this.epoch = 0;
+    this.drawn = -1;
   }
 
   push(buf) {
@@ -773,7 +777,14 @@ export class Relay {
     return PASS;
   }
 
+  _before(row) {
+    if (row.seen === this.epoch) return;
+    row.seen = this.epoch;
+    row.prior = row.shown && row.lch ? row.lch : row.ch.slice();
+  }
+
   _put(row, x, ch, w, iw = w) {
+    this._before(row);
     const cols = this.cols;
     if (row.ch[x] === '' && x > 0 && (!this.run || (this.insert && iw))) row.ch[x - 1] = ' ';
     if (this.insert && iw) {
@@ -806,6 +817,7 @@ export class Relay {
   }
 
   _erase(row, a, b, reset = false) {
+    this._before(row);
     const blank = bceOf(this.attr);
     const cols = this.cols;
     if (reset) row.tailCh = row.tailAt = null;
@@ -1252,6 +1264,7 @@ export class Relay {
       case '@': case 'P': {
         this._sync();
         const row = this.scr[this.y];
+        this._before(row);
         const blank = bceOf(this.attr);
         if (this.x > 0 && row.ch[this.x] === '') { row.ch[this.x - 1] = ' '; row.ch[this.x] = ' '; }
         const tail = row.tailCh ? row.tailCh.length : 0;
@@ -1408,6 +1421,7 @@ export class Relay {
   }
 
   _flush() {
+    this.drawn = this.epoch++;
     const scr = this.scr;
     const cur = scr[this.y];
     if (cur.shown && cur.cmapX !== this.x) { cur.dirty = true; this.dirty = true; }
@@ -1506,7 +1520,7 @@ export class Relay {
     if (!ok[0] && !ok[1]) return null;
     const level = ok[0] !== ok[1] ? (ok[1] ? 1 : 0) : c[0].pen <= c[1].pen ? 0 : 1;
     const [nch, nat, org] = toLogical(ch, row.at, r0, cells, c[level].levels, cols);
-    return { ch: nch, at: nat, org, level, sure: !c[level].ambiguous };
+    return { ch: nch, at: nat, org };
   }
 
   _drawRtl(row, y, above) {
@@ -1537,7 +1551,7 @@ export class Relay {
       if (x > a) {
         const whole = a === 0 && x === cols;
         const cell = !whole && above && above.segs ? above.segs.find((g) => g.a === a && g.b === x) : null;
-        layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : cell, whole ? below : null, cols, this.visual, this.markCells, src);
+        layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : cell, whole ? below : null, cols, this.visual, this.markCells, src, this.drawn);
       }
       a = x + 1;
     }
@@ -1575,7 +1589,7 @@ const isSpace = (ch) =>
 const blankCell = (ch, at) => isSpace(ch) && !at.visible;
 
 const isMarker = (cp) => {
-  if (cp === 0x20) return false;
+  if (cp === 0x20 || cp === 0x29c9) return false;
   const c = bidiClass(cp);
   if (c !== ON && c !== ET && c !== ES) return false;
   return !'([{«“‘"\'<'.includes(String.fromCodePoint(cp));
@@ -1631,8 +1645,8 @@ function undoLine(cps, guess) {
   let level;
   if (ok[0] !== ok[1]) level = ok[1] ? 1 : 0;
   else if (ok[0] && c[0].pen !== c[1].pen) level = c[0].pen < c[1].pen ? 0 : 1;
-  else level = guess();
-  return { level, levels: c[level].levels, sure: ok[level] && !c[level].ambiguous };
+  else level = guess(c);
+  return { level, levels: c[level].levels, sure: ok[level] };
 }
 
 function leadOf(ch, at, a, b, loose = false) {
@@ -1743,13 +1757,13 @@ function toLogical(ch, at, b0, cells, levels, cols) {
   return [nch, nat, org];
 }
 
-function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false, src = null) {
+function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false, src = null, epoch = -2) {
   const { cmap, vmap, lmap, lch } = maps;
   let ch = src ? src.ch : row.ch;
   let at = src ? src.at : row.at;
   let org = src ? src.org : null;
-  let fixed = src ? !src.sure : false;
-  let level = src ? src.level : -1;
+  let fixed = false;
+  let level = -1;
   const base = (x) => (ch[x] === '' ? 0x20 : ch[x].codePointAt(0));
   let [m0, j, b0] = leadOf(ch, at, a, b);
   let b1 = b;
@@ -1769,7 +1783,23 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     let open = false;
     if (first >= 0) {
       let cells = cellsOf(ch, at, extra ? x0 : vb, v1, cols);
-      const pick = undoLine(cpsOf(cells), () => {
+      const before = row.seen === epoch ? row.prior : row.shown ? row.lch : null;
+      const pick = undoLine(cpsOf(cells), (c) => {
+        if (whole && before) {
+          const agree = (levels) => {
+            let x = cells[0].x;
+            let n = 0;
+            for (const k of visualOrder(levels)) {
+              if (before[x] !== cells[k].ch) break;
+              n++;
+              x += cells[k].w;
+            }
+            return n;
+          };
+          const a = agree(c[0].levels);
+          const b = agree(c[1].levels);
+          if (a !== b) return a > b ? 0 : 1;
+        }
         if (whole && above && above.shown && above.soft && first === 0 && last === 1) return 1;
         if (labelEnd(ch, at, vb, v1, true) > 0) return 0;
         if (first !== 0 || last !== 1 || extra) return first === 1 || last === 1 ? 1 : 0;
@@ -1814,6 +1844,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     if (paragraphLevel(rest) === 1) pl = 1;
   }
   if (pl === 0 && !fixed && above && above.dir === 1 && (!whole || (above.shown && above.b0 === b0))) pl = 1;
+  if (pl === 0 && !fixed && leansRtl(probe)) pl = 1;
   if (whole) { row.dir = pl; row.b0 = b0; }
   else maps.segs.push({ a, b, dir: pl });
 

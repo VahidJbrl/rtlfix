@@ -85,9 +85,21 @@ test('a sentence that starts with a number is right-to-left', () => {
   assert.equal(t.row(1).trim(), `${joined('کرد')} ${joined('تغییر')} ${joined('فایل')} .۱ ●`);
 });
 
-test('an English sentence with a Persian word keeps its place', () => {
+test('a Persian sentence that starts with an English word reads right to left', () => {
   const t = screen(relayed([`${cup(1, 1)}  Python یک زبان است`], 40, 2), 40, 2);
-  assert.equal(t.row(1), `  Python ${joined('است')} ${joined('زبان')} ${joined('یک')}`);
+  const line = `${joined('است')} ${joined('زبان')} ${joined('یک')} Python`;
+  assert.equal(t.row(1), ' '.repeat(37 - line.length) + line);
+  const item = screen(relayed([`${cup(1, 1)}  - UTF-8 را همین حالا فعال کنید.`], 50, 2), 50, 2);
+  const step = `.${joined('کنید')} ${joined('فعال')} ${joined('حالا')} ${joined('همین')} ${joined('را')} UTF-8 -`;
+  assert.equal(item.row(1), ' '.repeat(47 - step.length) + step);
+});
+
+test('an English sentence or a line of code with a Persian word keeps its place', () => {
+  const bytes = `${cup(1, 1)}  The word for hello is سلام${cup(2, 1)}  print("سلام")${cup(3, 1)}  x = 1  # مقدار اولیه`;
+  const t = screen(relayed([bytes], 40, 3), 40, 3);
+  assert.equal(t.row(1), `  The word for hello is ${joined('سلام')}`);
+  assert.equal(t.row(2), `  print("${joined('سلام')}")`);
+  assert.equal(t.row(3), `  x = 1  # ${joined('مقدار اولیه')}`);
 });
 
 test('table columns stay put and Persian cells align right inside them', () => {
@@ -367,6 +379,36 @@ test('Claude Code on Windows: a table row it turned around as a whole goes back 
   assert.equal(t.row(2), `│      ${joined('نام')} │                   ${joined('توضیح')} │`);
   assert.equal(t.row(4), `│ app.py   │ ${joined('برنامه')} (main) ${joined('فایل اصلی')} │`);
   assert.equal(t.row(5), bot);
+});
+
+test('Claude Code on Windows: a wrapped line that starts with an English word and a number reads right to left', () => {
+  const bytes = `${cup(1, 1)}●  ${rev('همین هفته دو کار را انجام دهید:')}${cup(2, 1)}  UTF-8 ${rev('را')} default ${rev('کنید')}.`;
+  const t = screen(relayed([bytes], 50, 3, { visual: true }), 50, 3);
+  const line = `.${joined('کنید')} default ${joined('را')} UTF-8`;
+  assert.equal(t.row(2), ' '.repeat(47 - line.length) + line);
+});
+
+test('Claude Code on Windows: Persian typed after an English word reads right to left', () => {
+  const typed = [frame(`${cup(2, 1)}${ESC}[2K❯ Python ${cup(2, 10)}`), frame(`${cup(2, 1)}${ESC}[2K❯ Python ${rev('را نصب کن')}${cup(2, 19)}`)];
+  const t = screen(relayed(typed, 40, 3, { visual: true }), 40, 3);
+  const line = `${joined('کن')} ${joined('نصب')} ${joined('را')} Python ❮`;
+  assert.equal(t.row(2), ' '.repeat(39 - line.length) + line);
+  assert.deepEqual(t.cursor, [2, 39 - line.length]);
+});
+
+test('Claude Code on Windows: a number between an English name and Persian goes where it belongs', () => {
+  const t = screen(relayed([`${cup(1, 1)}  - Mary Smith 2025 ${rev('در')} Python ${rev('را یاد گرفت')}.`], 60, 2, { visual: true }), 60, 2);
+  const line = `.${joined('را یاد گرفت')} Python 2025 ${joined('در')} Mary Smith -`;
+  assert.equal(t.row(1), ' '.repeat(57 - line.length) + line);
+});
+
+test('Claude Code on Windows: a Persian table cell that starts with an English word reads right to left', () => {
+  const top = '┌──────────┬────────────────────────────────────┐';
+  const sep = '├──────────┼────────────────────────────────────┤';
+  const bot = '└──────────┴────────────────────────────────────┘';
+  const row = '│ 03_Bills │' + ` PDF 10 ${rev('قسط')} ${rev('آخرین')} ،${rev('فاکتور')} June 2026`.padEnd(36) + '│';
+  const t = screen(relayed([`${cup(1, 1)}${top}${cup(2, 1)}${sep}${cup(3, 1)}${row}${cup(4, 1)}${bot}`], 52, 5, { visual: true }), 52, 5);
+  assert.equal(t.row(3), `│ 03_Bills │ June 2026 10 ${joined('قسط')} ${joined('آخرین')} ،${joined('فاکتور')} PDF │`);
 });
 
 test('a leading underscore and the signs of C++ and C# stay with their words', () => {
