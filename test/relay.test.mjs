@@ -325,12 +325,23 @@ test('a mouse event on a right-to-left line points at the character drawn there'
   assert.equal(sent(r, `\x1b[M ${String.fromCharCode(32 + 29)}!`), `\x1b[M ${String.fromCharCode(32 + 1)}!`);
 });
 
-test('Claude Code on Windows: a mouse event points at the cell Claude Code drew', () => {
+test('Claude Code on Windows: a mouse event on an answer points at the cell Claude Code drew', () => {
   const r = new Relay({ cols: 30, rows: 3, visual: true });
-  r.push(Buffer.from(`${cup(1, 1)}${rev('سلام')}`));
+  r.push(Buffer.from(`${cup(1, 1)}${rev('سلام')}${cup(3, 1)}`));
   r.tick();
   assert.equal(sent(r, '\x1b[<0;29;1M'), '\x1b[<0;4;1M');
   assert.equal(sent(r, '\x1b[<0;27;1M'), '\x1b[<0;1;1M');
+});
+
+test('Claude Code on Windows: a click in the prompt puts the cursor on the letter under the pointer', () => {
+  const rule = '\u2500'.repeat(30);
+  const bytes = `${cup(1, 1)}${rule}${cup(2, 1)}\u276f ${rev('سلام دنیا')}${cup(3, 1)}${rule}${cup(2, 12)}`;
+  const r = new Relay({ cols: 30, rows: 4, visual: true });
+  const t = screen(Buffer.concat([r.push(Buffer.from(bytes)), r.tick()]), 30, 4);
+  const at = (glyph) => [...t.row(2)].indexOf(glyph) + 1;
+  assert.equal(sent(r, `\x1b[<0;${at(joined('دنیا')[2])};2M`), '\x1b[<0;9;2M');
+  assert.equal(sent(r, `\x1b[<0;${at(joined('سلام')[2])};2M`), '\x1b[<0;3;2M');
+  assert.equal(sent(r, '\x1b[<0;2;2M'), '\x1b[<0;30;2M');
 });
 
 test('a chip such as [⧉ In file] before the typed text does not decide its direction', () => {

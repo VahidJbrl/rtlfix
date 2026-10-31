@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.3 (2026-10-31)
+
+- On Windows, clicking a letter in Claude Code's prompt puts the cursor on that letter in Persian text too. Before, a click on Persian landed on the mirrored position.
+
 ## 1.4.2 (2026-10-31)
 
 Persian sentences that start with an English word.

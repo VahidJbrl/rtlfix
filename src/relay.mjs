@@ -402,9 +402,22 @@ export class Relay {
     if (!buf.includes(0x1b)) return buf;
     const row = this.scr[this.y];
     const flip = Boolean(row && row.shown && row.dir === 1);
+    let typing = null;
     const column = (x, y) => {
       const r = y >= 0 && y < this.rows ? this.scr[y] : null;
-      return r && r.shown && r.vmap && x >= 0 && x < this.cols ? r.vmap[x] : x;
+      if (!r || !r.shown || !r.vmap || x < 0 || x >= this.cols) return x;
+      if (this.visual && r.lmap) {
+        typing ??= this._typingRows();
+        if (typing.has(y)) {
+          const l = r.lmap[x];
+          if (l >= this.cols) return this.cols - 1;
+          if (l >= 0) return l;
+          let start = this.cols - 1;
+          for (const v of r.lmap) if (v >= 0 && v < start) start = v;
+          return start;
+        }
+      }
+      return r.vmap[x];
     };
     const text = buf.toString('latin1').replace(INPUT_SEQ, (m, intro, params, key, b, x, y, end, cb, cx, cy) => {
       if (key) return flip ? `\x1b${intro}${params}${key === 'C' ? 'D' : 'C'}` : m;
@@ -413,6 +426,24 @@ export class Relay {
       return nx < 256 ? `\x1b[M${cb}${String.fromCharCode(nx)}${cy}` : m;
     });
     return Buffer.from(text, 'latin1');
+  }
+
+  _typingRows() {
+    const rule = (r) => {
+      let n = 0;
+      for (const c of r.ch) {
+        if (c === '\u2500') n++;
+        else if (c !== ' ' && c !== '') return false;
+      }
+      return 2 * n > this.cols;
+    };
+    const rows = new Set([this.y]);
+    let top = this.y - 1;
+    while (top >= 0 && this.y - top < 40 && !rule(this.scr[top])) top--;
+    let bot = this.y + 1;
+    while (bot < this.rows && bot - this.y < 40 && !rule(this.scr[bot])) bot++;
+    if (top >= 0 && bot < this.rows && rule(this.scr[top]) && rule(this.scr[bot])) for (let k = top + 1; k < bot; k++) rows.add(k);
+    return rows;
   }
 
   resize(cols, rows) {
