@@ -344,6 +344,55 @@ export class Relay {
     return Buffer.from(f, 'utf8');
   }
 
+  select(from, to) {
+    const old = this.sel;
+    this.sel = from && to ? { from, to } : null;
+    for (const s of [old, this.sel]) {
+      if (!s) continue;
+      for (let y = Math.max(0, Math.min(s.from[0], s.to[0])); y <= Math.min(this.rows - 1, Math.max(s.from[0], s.to[0])); y++) this.scr[y].dirty = true;
+      this.dirty = true;
+    }
+  }
+
+  _logical([y, x]) {
+    const row = this.scr[y];
+    return [y, row && row.shown && row.lmap && x >= 0 && x < this.cols ? row.lmap[x] : x];
+  }
+
+  _span() {
+    let a = this._logical(this.sel.from);
+    let b = this._logical(this.sel.to);
+    if (a[0] > b[0] || (a[0] === b[0] && a[1] > b[1])) [a, b] = [b, a];
+    return [a, b];
+  }
+
+  _mark(y, at, lmap) {
+    const [[y1, l1], [y2, l2]] = this._span();
+    if (y < y1 || y > y2) return;
+    for (let x = 0; x < this.cols; x++) {
+      const l = lmap ? lmap[x] : x;
+      if ((y > y1 || l >= l1) && (y < y2 || l <= l2)) at[x] = makeAttr({ ...at[x].st, v: !at[x].st.v }, at[x].link);
+    }
+  }
+
+  selectedText() {
+    if (!this.sel) return '';
+    const [[y1, l1], [y2, l2]] = this._span();
+    let text = '';
+    let glued = false;
+    for (let y = y1; y <= y2; y++) {
+      const row = this.scr[y];
+      if (!row) continue;
+      const ch = row.shown && row.lch ? row.lch : row.ch;
+      let line = '';
+      for (let x = Math.max(0, y === y1 ? l1 : 0); x <= Math.min(this.cols - 1, y === y2 ? l2 : this.cols - 1); x++) if (ch[x] !== '') line += ch[x];
+      text += glued ? line.trim() : line.trimEnd();
+      glued = y < y2 && row.shown && row.x0 >= 0 && continues(this.scr[y + 1], row.x0, this.cols);
+      if (y < y2) text += glued ? ' ' : '\n';
+    }
+    return text;
+  }
+
   input(buf) {
     if (!buf.includes(0x1b)) return buf;
     const row = this.scr[this.y];
@@ -1398,7 +1447,12 @@ export class Relay {
     }
     row.shown = false;
     row.cmap = null;
-    const [cells, end] = emitCells(row.ch, row.at, this.cols);
+    let at = row.at;
+    if (this.sel) {
+      at = row.at.slice();
+      this._mark(y, at, null);
+    }
+    const [cells, end] = emitCells(row.ch, at, this.cols);
     row.tlen = end;
     return this._goto(y, 0) + cells;
   }
@@ -1410,7 +1464,9 @@ export class Relay {
     const cmap = new Int16Array(cols + 1);
     for (let x = 0; x <= cols; x++) cmap[x] = x;
     const vmap = new Int16Array(cols);
-    for (let x = 0; x < cols; x++) vmap[x] = x;
+    const lmap = new Int16Array(cols);
+    for (let x = 0; x < cols; x++) vmap[x] = lmap[x] = x;
+    const maps = { cmap, vmap, lmap, lch: row.ch.slice() };
     const cursorX = this.y === y && this.scr[this.y] === row ? this.x : -1;
     let a = 0;
     const below = this.visual && this.scr[y] === row && y + 1 < this.rows ? this.scr[y + 1] : null;
@@ -1422,13 +1478,16 @@ export class Relay {
       if (x < cols && !isColumnRule(row.ch[x])) continue;
       if (x > a) {
         const whole = a === 0 && x === cols;
-        layoutSegment(row, a, x, whole, dch, dat, cmap, vmap, cursorX, whole ? above : null, whole ? below : null, cols, this.visual, this.markCells);
+        layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : null, whole ? below : null, cols, this.visual, this.markCells);
       }
       a = x + 1;
     }
     row.cmap = cmap;
     row.vmap = vmap;
+    row.lmap = lmap;
+    row.lch = maps.lch;
     row.cmapX = cursorX;
+    if (this.sel) this._mark(y, dat, lmap);
     const [cells, end] = emitCells(dch, dat, cols);
     row.tlen = end;
     return this._goto(y, 0) + cells;
@@ -1531,6 +1590,11 @@ function labelEnd(ch, at, x, b, loose = false) {
   return k < b ? k : -1;
 }
 
+function startsAt(row, cols) {
+  const [m0, , b0] = leadOf(row.ch, row.at, 0, cols, true);
+  return m0 < cols && b0 === m0 ? m0 : -1;
+}
+
 function continues(row, x0, cols) {
   const [m0, , b0] = leadOf(row.ch, row.at, 0, cols, true);
   return m0 < cols && b0 === m0 && m0 >= x0 && m0 <= x0 + 2;
@@ -1585,7 +1649,8 @@ function toLogical(ch, at, b0, b1, cols, level) {
   return [nch, nat, org];
 }
 
-function layoutSegment(row, a, b, whole, dch, dat, cmap, vmap, cursorX, above, below, cols, visual = false, markCells = false) {
+function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false) {
+  const { cmap, vmap, lmap, lch } = maps;
   let ch = row.ch;
   let at = row.at;
   let org = null;
@@ -1602,7 +1667,7 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, vmap, cursorX, above, b
     let near = false;
     if (whole && vb > v0) x0 = vj + 1;
     else if (whole && above && above.shown && above.x0 >= 0 && vb >= above.x0) x0 = above.x0;
-    else if (whole && vb > 0 && below && continues(below, vb - 1, cols)) { x0 = vb - 1; near = true; }
+    else if (whole && vb > 0 && below && startsAt(below, cols) === vb - 1) { x0 = vb - 1; near = true; }
     const extra = vb > x0;
     const [first, last] = strongEnds(ch, vb, v1);
     const open = first === 0 && last === 1 && !extra;
@@ -1620,6 +1685,7 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, vmap, cursorX, above, b
       while (b1 > b0 && blankCell(ch[b1 - 1], at[b1 - 1])) b1--;
     }
   }
+  for (let x = a; x < b; x++) lch[x] = ch[x];
   if (cursorX > b1 && cursorX < b) b1 = cursorX;
   if (b1 <= b0) return;
 
@@ -1716,14 +1782,22 @@ function layoutSegment(row, a, b, whole, dch, dat, cmap, vmap, cursorX, above, b
   for (let k = 0; k < units.length; k++) {
     if (vis[k] < 0) continue;
     const p = org ? org[units[k].x] : units[k].x;
-    for (let w = 0; w < units[k].w; w++) vmap[vis[k] + w] = p + w;
+    for (let w = 0; w < units[k].w; w++) {
+      vmap[vis[k] + w] = p + w;
+      lmap[vis[k] + w] = units[k].x + w;
+    }
     lo = Math.min(lo, vis[k]);
     hi = Math.max(hi, vis[k] + units[k].w - 1);
   }
   if (hi >= 0) {
     for (let x = from; x < b; x++) {
-      if (x < lo) vmap[x] = vmap[lo];
-      else if (x > hi && pl === 1) vmap[x] = vmap[hi];
+      if (x < lo) {
+        vmap[x] = vmap[lo];
+        if (pl === 1) lmap[x] = cols;
+      } else if (x > hi && pl === 1) {
+        vmap[x] = vmap[hi];
+        lmap[x] = -1;
+      }
     }
   }
 

@@ -67,7 +67,7 @@ npm install -g --prefix ~/.local github:VahidJbrl/rtlfix
 Without `git`, install the release archive instead:
 
 ```bash
-npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.3.0.tar.gz
+npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.3.1.tar.gz
 ```
 
 **Without npm**
@@ -165,6 +165,7 @@ No. rtlfix only rewrites the bytes on their way to your screen.
 
 - Copying with the terminal's own selection copies the joined glyphs in display order, and the terminal's search box cannot find Persian text. To get the original text, copy from the agent itself: select with the mouse in Claude Code's fullscreen mode, or use `/copy`.
 - On a right-to-left line the arrow keys follow the line's direction; inside an English word on such a line they move the other way, as in most terminals with bidi support.
+- On Windows, rtlfix draws a mouse drag selection itself, because Claude Code's own selection follows its display order there. Clicks, double-clicks and the scroll wheel still go to Claude Code. A drag past the top or bottom of the window does not scroll.
 - When you make the terminal narrower, VS Code re-wraps the lines already in the scrollback, which can split right-to-left lines there. What is on screen is redrawn correctly.
 - Something an agent draws on top of a line of text, such as a floating hint, is laid out together with that line.
 - Tables keep their left-to-right column order; the text inside each cell is laid out right to left.

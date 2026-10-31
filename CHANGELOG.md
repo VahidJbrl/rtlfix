@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1 (2026-10-31)
+
+- On Windows, a mouse selection across several right-to-left lines follows the reading order: it covers the end of the first line and the start of the last, and copies that text in order. Claude Code's own selection follows its display order on Windows, so rtlfix now draws drag selections itself there; clicks, double-clicks and the scroll wheel still go to Claude Code.
+- On Windows, the first line of a Persian paragraph is no longer mistaken for a wrapped line when the next line starts at the same column.
+
 ## 1.3.0 (2026-10-30)
 
 - On a right-to-left line, the left and right arrow keys move the cursor the way the line is drawn: Right goes back through Persian text and Left goes forward, as in terminals with bidi support. Before, they moved in the agent's left-to-right order, so correcting a typo meant pressing the opposite key.

@@ -340,3 +340,27 @@ test('text that Claude Code on Windows copies in display order is put back in re
   assert.equal(logicalText(`Claude ${rev('خوب است')}.`), 'Claude خوب است.');
   assert.equal(logicalText('plain English text'), 'plain English text');
 });
+
+const visualOf = (r, y, l) => Array.from(r.scr[y].lmap).indexOf(l);
+
+for (const visual of [false, true]) {
+  test(`a selection across right-to-left lines follows the reading order${visual ? ' (Claude Code on Windows)' : ''}`, () => {
+    const line = (t) => (visual ? rev(t) : t);
+    const r = new Relay({ cols: 30, rows: 4, visual });
+    const out = [r.push(Buffer.from(`${cup(1, 1)}  ${line('سلام دنیا خوب')}${cup(2, 1)}  ${line('است امروز')}`)), r.tick()];
+    const start = [0, visualOf(r, 0, 7)];
+    const end = [1, visualOf(r, 1, 4)];
+    r.select(end, start);
+    out.push(r.tick());
+    assert.equal(r.selectedText(), visual ? 'دنیا خوب است' : 'دنیا خوب\n  است');
+    const t = screen(Buffer.concat(out), 30, 4).term;
+    const lit = (y) => t.scr[y].at.map((a, x) => (a.st.v ? x : -1)).filter((x) => x >= 0);
+    assert.equal(Math.max(...lit(0)), start[1]);
+    assert.ok(Math.min(...lit(0)) < start[1]);
+    assert.equal(Math.min(...lit(1)), end[1]);
+    assert.ok(Math.max(...lit(1)) > end[1]);
+    r.select(null);
+    assert.equal(r.selectedText(), '');
+    assert.equal(screen(Buffer.concat([...out, r.tick()]), 30, 4).term.scr[0].at.filter((a) => a.st.v).length, 0);
+  });
+}

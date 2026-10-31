@@ -146,9 +146,11 @@ function runDirect(cmd, env = process.env, windows = null) {
 const NOTE = '\x1b]rtlfix;';
 const COPY = '\x1b]52;';
 const MOUSE = /\x1b\[<\d+;\d+;\d+[Mm]/g;
+const POINTER = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
 const CLIPBOARD = [
   '$d = (New-Object IO.StreamReader([Console]::OpenStandardInput(), [Text.Encoding]::UTF8)).ReadToEnd() | ConvertFrom-Json',
   '$n = { param($t) if ($null -eq $t) { "" } else { ($t -replace "`r`n", "`n").TrimEnd("`n") } }',
+  'if ($null -eq $d.x) { Set-Clipboard -Value $d.y; exit }',
   '$end = (Get-Date).AddSeconds(5)',
   'while ((Get-Date) -lt $end) { if ((& $n (Get-Clipboard -Raw)) -eq (& $n $d.x)) { Set-Clipboard -Value $d.y; break }; Start-Sleep -Milliseconds 100 }',
 ].join('; ');
@@ -185,8 +187,61 @@ function pipeRelay(child, { cursor, hello = false, filter = null, visual = false
   };
   let selecting = false;
   let held = Buffer.alloc(0);
+  let press = null;
+  let dragging = false;
+  let marked = false;
+  const mark = (from, to) => {
+    if (!relay || failed) return;
+    render(() => { relay.select(from, to); return relay.tick(); }, Buffer.alloc(0));
+    marked = Boolean(from);
+  };
+  const copyOut = (text) => {
+    if (!text) return;
+    write(Buffer.from(`${COPY}c;${Buffer.from(text, 'utf8').toString('base64')}\x07`, 'latin1'));
+    if (process.platform === 'win32') fixClipboard(null, text);
+  };
+  const pointer = (buf) => {
+    const s = buf.toString('latin1');
+    if (!s.includes('\x1b[<') && !marked) return buf;
+    let out = '';
+    let last = 0;
+    let clear = false;
+    for (const m of s.matchAll(POINTER)) {
+      if (s.slice(last, m.index)) clear = true;
+      out += s.slice(last, m.index);
+      last = m.index + m[0].length;
+      const b = Number(m[1]);
+      const at = [Number(m[3]) - 1, Number(m[2]) - 1];
+      const left = (b & 3) === 0 && !(b & 64);
+      if (left && m[4] === 'M' && !(b & 32)) {
+        if (marked) mark(null);
+        press = { seq: m[0], at };
+        dragging = false;
+      } else if (left && m[4] === 'M' && press) {
+        dragging = true;
+        mark(press.at, at);
+      } else if (left && m[4] === 'm' && press) {
+        if (dragging) {
+          mark(press.at, at);
+          copyOut(relay.selectedText());
+        } else {
+          out += press.seq + m[0];
+        }
+        press = null;
+        dragging = false;
+      } else {
+        if (!(b & 32) || (b & 64)) clear = true;
+        out += m[0];
+      }
+    }
+    if (s.slice(last).replace(/\x1b\[[IO]/g, '')) clear = true;
+    out += s.slice(last);
+    if (clear && marked && !dragging) mark(null);
+    return Buffer.from(out, 'latin1');
+  };
   const input = (buf) => {
     if (visual) {
+      buf = pointer(buf);
       const s = buf.toString('latin1');
       if (/\x1b\[<\d+;\d+;\d+m/.test(s)) selecting = true;
       else if (s.replace(MOUSE, '').replace(/\x03/g, '')) selecting = false;
