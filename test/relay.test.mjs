@@ -52,8 +52,8 @@ test('typed Persian is joined, right-aligned, with the cursor left of the text',
   [...'سلام'].forEach((ch, i) => chunks.push(frame(`${cup(3, 3 + i)}${ch}${cup(3, 4 + i)}`)));
   const t = screen(relayed(chunks, 30, 5), 30, 5);
   const line = joined('سلام') + ' ❮';
-  assert.equal(t.row(3), ' '.repeat(29 - line.length) + line);
-  assert.deepEqual(t.cursor, [3, 29 - line.length]);
+  assert.equal(t.row(3), ' '.repeat(30 - line.length) + line);
+  assert.deepEqual(t.cursor, [3, 30 - line.length]);
 });
 
 test('an English word typed inside Persian stays whole and the cursor follows it', () => {
@@ -61,8 +61,8 @@ test('an English word typed inside Persian stays whole and the cursor follows it
   [...'سلام hel'].forEach((ch, i) => chunks.push(frame(`${cup(2, 3 + i)}${ch}${cup(2, 4 + i)}`)));
   const t = screen(relayed(chunks, 30, 3), 30, 3);
   const line = `hel ${joined('سلام')} *`;
-  assert.equal(t.row(2), ' '.repeat(29 - line.length) + line);
-  assert.deepEqual(t.cursor, [2, 29 - line.length + 4]);
+  assert.equal(t.row(2), ' '.repeat(30 - line.length) + line);
+  assert.deepEqual(t.cursor, [2, 30 - line.length + 4]);
 });
 
 test('a full-row redraw with a drawn cursor cell', () => {
@@ -70,8 +70,8 @@ test('a full-row redraw with a drawn cursor cell', () => {
   const out = relayed([frame(`${cup(4, 1)}${ESC}[2K${row}${cup(4, 5)}`)], 20, 6);
   const t = screen(out, 20, 6);
   const line = ` ${joined('یک')} *`;
-  assert.equal(t.row(4), ' '.repeat(19 - line.length) + line);
-  assert.deepEqual(t.cursor, [4, 19 - line.length + 1]);
+  assert.equal(t.row(4), ' '.repeat(20 - line.length) + line);
+  assert.deepEqual(t.cursor, [4, 20 - line.length + 1]);
   assert.ok(!out.toString('utf8').includes('\u200b'));
 });
 
@@ -88,10 +88,10 @@ test('a sentence that starts with a number is right-to-left', () => {
 test('a Persian sentence that starts with an English word reads right to left', () => {
   const t = screen(relayed([`${cup(1, 1)}  Python یک زبان است`], 40, 2), 40, 2);
   const line = `${joined('است')} ${joined('زبان')} ${joined('یک')} Python`;
-  assert.equal(t.row(1), ' '.repeat(37 - line.length) + line);
+  assert.equal(t.row(1), ' '.repeat(38 - line.length) + line);
   const item = screen(relayed([`${cup(1, 1)}  - UTF-8 را همین حالا فعال کنید.`], 50, 2), 50, 2);
   const step = `.${joined('کنید')} ${joined('فعال')} ${joined('حالا')} ${joined('همین')} ${joined('را')} UTF-8 -`;
-  assert.equal(item.row(1), ' '.repeat(47 - step.length) + step);
+  assert.equal(item.row(1), ' '.repeat(48 - step.length) + step);
 });
 
 test('an English sentence or a line of code with a Persian word keeps its place', () => {
@@ -111,12 +111,12 @@ test('a wrapped line continues the RTL paragraph above it', () => {
   const t = screen(relayed([`${cup(1, 1)}● سلام دنیا\r\n  server.py را ببین`], 40, 3), 40, 3);
   assert.equal(t.row(1).trim(), `${joined('دنیا')} ${joined('سلام')} ●`);
   const line = `${joined('ببین')} ${joined('را')} server.py`;
-  assert.equal(t.row(2), ' '.repeat(37 - line.length) + line);
+  assert.equal(t.row(2), ' '.repeat(38 - line.length) + line);
 });
 
 test('emoji keep their two cells and RLM takes none', () => {
   const t = screen(relayed([`${cup(1, 1)}سلام 👋 دنیا`], 20, 2), 20, 2);
-  assert.equal(t.row(1), ' '.repeat(20 - 1 - 11) + `${joined('دنیا')} 👋 ${joined('سلام')}`);
+  assert.equal(t.row(1), ' '.repeat(20 - 11) + `${joined('دنیا')} 👋 ${joined('سلام')}`);
   const r = screen(relayed([`${cup(1, 1)}ab\u200fcd${cup(2, 1)}x`], 20, 3), 20, 3);
   assert.equal(r.row(1), 'ab\u200fcd');
   assert.deepEqual(r.cursor, [2, 2]);
@@ -154,7 +154,7 @@ test('scrolling moves redrawn rows with the screen', () => {
 
 test('the alternate screen keeps the main screen and its saved cursor', () => {
   const t = screen(relayed([`${cup(1, 1)}سلام`, `${ESC}[?1049h${cup(1, 1)}alt${ESC}[?1049l`], 12, 2), 12, 2);
-  assert.equal(t.row(1), ' '.repeat(12 - 1 - 3) + joined('سلام'));
+  assert.equal(t.row(1), ' '.repeat(12 - 3) + joined('سلام'));
   const u = screen(relayed([`${cup(5, 4)}${ESC}[?1049h${cup(2, 2)}${ESC}7alt${ESC}[?1049lx`], 12, 6), 12, 6);
   assert.equal(u.row(5), '   x');
 });
@@ -163,7 +163,7 @@ test('resizing follows the terminal', () => {
   const r = new Relay({ cols: 12, rows: 2 });
   const a = r.push(Buffer.from(`${cup(1, 1)}سلام`, 'utf8'));
   r.resize(20, 2);
-  assert.equal(screen(Buffer.concat([a, r.tick()]), 20, 2).row(1), ' '.repeat(20 - 1 - 3) + joined('سلام'));
+  assert.equal(screen(Buffer.concat([a, r.tick()]), 20, 2).row(1), ' '.repeat(20 - 3) + joined('سلام'));
   const h = new Relay({ cols: 10, rows: 5 });
   h.push(Buffer.from('l1\r\nl2\r\nl3\r\nl4\r\nسلام', 'utf8'));
   h.resize(10, 3);
@@ -220,7 +220,7 @@ const rev = (s) => [...s].reverse().join('');
 test('Claude Code on Windows: its own reordering is undone and the line is drawn again', () => {
   const t = screen(relayed([`${cup(1, 1)}● ${rev('سلام دنیا')}`], 30, 3, { visual: true }), 30, 3);
   const line = joined('سلام دنیا') + ' ●';
-  assert.equal(t.row(1), ' '.repeat(29 - line.length) + line);
+  assert.equal(t.row(1), ' '.repeat(30 - line.length) + line);
 });
 
 test('Claude Code on Windows: a wrapped line that starts with an English word keeps its order', () => {
@@ -228,15 +228,15 @@ test('Claude Code on Windows: a wrapped line that starts with an English word ke
   const t = screen(relayed([bytes], 40, 3, { visual: true }), 40, 3);
   const first = joined('سلام دنیا');
   const second = '.' + joined('خوب است') + ' Claude';
-  assert.equal(t.row(1), ' '.repeat(37 - first.length) + first);
-  assert.equal(t.row(2), ' '.repeat(37 - second.length) + second);
+  assert.equal(t.row(1), ' '.repeat(38 - first.length) + first);
+  assert.equal(t.row(2), ' '.repeat(38 - second.length) + second);
 });
 
 test('Claude Code on Windows: a highlighted prompt line keeps its marker on the right', () => {
   const bytes = `${cup(1, 1)}${ESC}[48;5;236m❯ ${rev('سلام')}      ${ESC}[0m`;
   const t = screen(relayed([bytes], 40, 3, { visual: true }), 40, 3);
   const line = joined('سلام') + ' ❮';
-  assert.equal(t.row(1), ' '.repeat(39 - line.length) + line);
+  assert.equal(t.row(1), ' '.repeat(40 - line.length) + line);
 });
 
 test('the request for the Windows console input encoding is not passed on', () => {
@@ -247,19 +247,34 @@ test('Claude Code on Windows: brackets at the ends of a line tell its direction'
   const bytes = `${cup(1, 1)}   ${rev('سلام دنیا')}${cup(2, 1)}  (npm) ${rev('خوب است')}.`;
   const t = screen(relayed([bytes], 40, 3, { visual: true }), 40, 3);
   const line = '.' + joined('خوب است') + ' (npm)';
-  assert.equal(t.row(2), ' '.repeat(37 - line.length) + line);
+  assert.equal(t.row(2), ' '.repeat(38 - line.length) + line);
 });
 
 test('a mark on an alef stays on the lam-alef ligature', () => {
   const [m, th, la] = [...preShapeArabic('مثلا')];
   const line = la + '\u064b' + th + m;
-  assert.equal(screen(relayed([`${cup(1, 1)}مثلاً`], 20, 2), 20, 2).row(1), ' '.repeat(16) + line);
+  assert.equal(screen(relayed([`${cup(1, 1)}مثلاً`], 20, 2), 20, 2).row(1), ' '.repeat(17) + line);
 });
 
 test('where marks take a cell of their own, a right-aligned line leaves room for them', () => {
   const [m, th, la] = [...preShapeArabic('مثلا')];
   const line = la + '\u064b' + th + m;
-  assert.equal(screen(relayed([`${cup(1, 1)}مثلاً`], 20, 2, { markCells: true }), 20, 2).row(1), ' '.repeat(15) + line);
+  assert.equal(screen(relayed([`${cup(1, 1)}مثلاً`], 20, 2, { markCells: true }), 20, 2).row(1), ' '.repeat(16) + line);
+});
+
+test('a Persian line that fills the whole width lines up with the shorter lines around it', () => {
+  const full = `${joined('کتاب خوب است')} -`;
+  const short = `${joined('کتاب است')} -`;
+  const linux = screen(relayed([`${cup(1, 1)}  - کتاب خوب است${cup(2, 1)}  - کتاب است`], 16, 3), 16, 3);
+  assert.deepEqual([linux.row(1), linux.row(2)], [full, ' '.repeat(14 - short.length) + short]);
+  const windows = screen(relayed([`${cup(1, 1)}  ${rev('- کتاب خوب است')}${cup(2, 1)}  ${rev('- کتاب است')}`], 16, 3, { visual: true }), 16, 3);
+  assert.deepEqual([windows.row(1), windows.row(2)], [full, ' '.repeat(14 - short.length) + short]);
+});
+
+test('where marks take a cell of their own, a line that fills the width drops its marks instead of spilling over', () => {
+  const t = screen(relayed([`${cup(1, 1)}  - حتماً خوب است${cup(2, 1)}x`], 16, 3, { markCells: true }), 16, 3);
+  assert.equal(t.row(1), `${joined('است')} ${joined('خوب')} ${joined('حتما')} -`);
+  assert.equal(t.row(2), 'x');
 });
 
 test('Claude Code on Windows: a space typed after Persian keeps the text in place and moves the cursor', () => {
@@ -285,7 +300,7 @@ test('a space typed after Persian keeps the text in place and moves the cursor',
 test('a Persian line after an English label such as recap: reads right to left', () => {
   const t = screen(relayed([`${cup(1, 1)}※ recap: سلام دنیا`], 40, 3), 40, 3);
   const line = joined('سلام دنیا') + ' :recap ※';
-  assert.equal(t.row(1), ' '.repeat(39 - line.length) + line);
+  assert.equal(t.row(1), ' '.repeat(40 - line.length) + line);
   const english = screen(relayed([`${cup(1, 1)}※ recap: fixed the سلام bug`], 40, 3), 40, 3);
   assert.equal(english.row(1), `※ recap: fixed the ${joined('سلام')} bug`);
 });
@@ -293,10 +308,10 @@ test('a Persian line after an English label such as recap: reads right to left',
 test('Claude Code on Windows: the recap line is turned back and reads right to left', () => {
   const plain = screen(relayed([`${cup(1, 1)}※ recap: ${rev('سلام دنیا')}`], 40, 3, { visual: true }), 40, 3);
   const line = joined('سلام دنیا') + ' :recap ※';
-  assert.equal(plain.row(1), ' '.repeat(39 - line.length) + line);
+  assert.equal(plain.row(1), ' '.repeat(40 - line.length) + line);
   const mixed = screen(relayed([`${cup(1, 1)}※ recap: ${rev('فایل')} config.py ${rev('درست شد')}`], 50, 3, { visual: true }), 50, 3);
   const both = joined('درست شد') + ' config.py ' + joined('فایل') + ' :recap ※';
-  assert.equal(mixed.row(1), ' '.repeat(49 - both.length) + both);
+  assert.equal(mixed.row(1), ' '.repeat(50 - both.length) + both);
 });
 
 const sent = (r, s) => r.input(Buffer.from(s, 'latin1')).toString('latin1');
@@ -318,19 +333,19 @@ test('a mouse event on a right-to-left line points at the character drawn there'
   const r = new Relay({ cols: 30, rows: 3 });
   r.push(Buffer.from(`${cup(1, 1)}سلام${cup(2, 1)}hello`));
   r.tick();
-  assert.equal(sent(r, '\x1b[<0;29;1M'), '\x1b[<0;1;1M');
-  assert.equal(sent(r, '\x1b[<0;27;1M\x1b[<0;27;1m'), '\x1b[<0;4;1M\x1b[<0;4;1m');
+  assert.equal(sent(r, '\x1b[<0;30;1M'), '\x1b[<0;1;1M');
+  assert.equal(sent(r, '\x1b[<0;28;1M\x1b[<0;28;1m'), '\x1b[<0;4;1M\x1b[<0;4;1m');
   assert.equal(sent(r, '\x1b[<0;6;1M'), '\x1b[<0;4;1M');
   assert.equal(sent(r, '\x1b[<0;3;2M'), '\x1b[<0;3;2M');
-  assert.equal(sent(r, `\x1b[M ${String.fromCharCode(32 + 29)}!`), `\x1b[M ${String.fromCharCode(32 + 1)}!`);
+  assert.equal(sent(r, `\x1b[M ${String.fromCharCode(32 + 30)}!`), `\x1b[M ${String.fromCharCode(32 + 1)}!`);
 });
 
 test('Claude Code on Windows: a mouse event on an answer points at the cell Claude Code drew', () => {
   const r = new Relay({ cols: 30, rows: 3, visual: true });
   r.push(Buffer.from(`${cup(1, 1)}${rev('سلام')}${cup(3, 1)}`));
   r.tick();
-  assert.equal(sent(r, '\x1b[<0;29;1M'), '\x1b[<0;4;1M');
-  assert.equal(sent(r, '\x1b[<0;27;1M'), '\x1b[<0;1;1M');
+  assert.equal(sent(r, '\x1b[<0;30;1M'), '\x1b[<0;4;1M');
+  assert.equal(sent(r, '\x1b[<0;28;1M'), '\x1b[<0;1;1M');
 });
 
 test('Claude Code on Windows: a click in the prompt puts the cursor on the letter under the pointer', () => {
@@ -371,13 +386,13 @@ test('Claude Code on Windows: a list title with brackets it did not mirror reads
   const bytes = `${cup(1, 1)}  1. Goodreads 4.3 · )The Hobbit، 1937( ${rev('کتاب')}${cup(2, 1)}     ${rev('داستانی درباره سفر')}`;
   const t = screen(relayed([bytes], 60, 3, { visual: true }), 60, 3);
   const line = `Goodreads 4.3 · (The Hobbit، 1937) ${joined('کتاب')} .1`;
-  assert.equal(t.row(1), ' '.repeat(57 - line.length) + line);
+  assert.equal(t.row(1), ' '.repeat(58 - line.length) + line);
 });
 
 test('Claude Code on Windows: a percent sign stays with its number', () => {
   const t = screen(relayed([`${cup(1, 1)}  .${rev('هم هستند')} )95%`], 40, 2, { visual: true }), 40, 2);
   const line = `.${joined('هم هستند')} (95%`;
-  assert.equal(t.row(1), ' '.repeat(37 - line.length) + line);
+  assert.equal(t.row(1), ' '.repeat(38 - line.length) + line);
 });
 
 test('Claude Code on Windows: a table row it turned around as a whole goes back into its columns', () => {
@@ -396,21 +411,21 @@ test('Claude Code on Windows: a wrapped line that starts with an English word an
   const bytes = `${cup(1, 1)}●  ${rev('همین هفته دو کار را انجام دهید:')}${cup(2, 1)}  UTF-8 ${rev('را')} default ${rev('کنید')}.`;
   const t = screen(relayed([bytes], 50, 3, { visual: true }), 50, 3);
   const line = `.${joined('کنید')} default ${joined('را')} UTF-8`;
-  assert.equal(t.row(2), ' '.repeat(47 - line.length) + line);
+  assert.equal(t.row(2), ' '.repeat(48 - line.length) + line);
 });
 
 test('Claude Code on Windows: Persian typed after an English word reads right to left', () => {
   const typed = [frame(`${cup(2, 1)}${ESC}[2K❯ Python ${cup(2, 10)}`), frame(`${cup(2, 1)}${ESC}[2K❯ Python ${rev('را نصب کن')}${cup(2, 19)}`)];
   const t = screen(relayed(typed, 40, 3, { visual: true }), 40, 3);
   const line = `${joined('کن')} ${joined('نصب')} ${joined('را')} Python ❮`;
-  assert.equal(t.row(2), ' '.repeat(39 - line.length) + line);
-  assert.deepEqual(t.cursor, [2, 39 - line.length]);
+  assert.equal(t.row(2), ' '.repeat(40 - line.length) + line);
+  assert.deepEqual(t.cursor, [2, 40 - line.length]);
 });
 
 test('Claude Code on Windows: a number between an English name and Persian goes where it belongs', () => {
   const t = screen(relayed([`${cup(1, 1)}  - Mary Smith 2025 ${rev('در')} Python ${rev('را یاد گرفت')}.`], 60, 2, { visual: true }), 60, 2);
   const line = `.${joined('را یاد گرفت')} 2025 Python ${joined('در')} Mary Smith -`;
-  assert.equal(t.row(1), ' '.repeat(57 - line.length) + line);
+  assert.equal(t.row(1), ' '.repeat(58 - line.length) + line);
 });
 
 test('Claude Code on Windows: a Persian table cell that starts with an English word reads right to left', () => {
@@ -425,21 +440,21 @@ test('Claude Code on Windows: a Persian table cell that starts with an English w
 test('a number stays in front of the English words that follow it, as in a street address', () => {
   const line = `${joined('را ببینید')} 12 E Main St ${joined('آدرس')}`;
   const linux = screen(relayed([`${cup(1, 1)}  آدرس 12 E Main St را ببینید`], 50, 2), 50, 2);
-  assert.equal(linux.row(1), ' '.repeat(47 - line.length) + line);
+  assert.equal(linux.row(1), ' '.repeat(48 - line.length) + line);
   const windows = screen(relayed([`${cup(1, 1)}  ${rev('را ببینید')} E Main St 12 ${rev('آدرس')}`], 50, 2, { visual: true }), 50, 2);
-  assert.equal(windows.row(1), ' '.repeat(47 - line.length) + line);
+  assert.equal(windows.row(1), ' '.repeat(48 - line.length) + line);
 });
 
 test('Claude Code on Windows: a number after an English name stays after it', () => {
   const t = screen(relayed([`${cup(1, 1)}  .Misc ۴ و Notes ۱، Photos ۲ ،۱ ${rev('پوشه اصلی')}`], 60, 2, { visual: true }), 60, 2);
   const line = `.Misc ۴ ${joined('و')} Notes ۱، Photos ۲ ،۱ ${joined('پوشه اصلی')}`;
-  assert.equal(t.row(1), ' '.repeat(57 - line.length) + line);
+  assert.equal(t.row(1), ' '.repeat(58 - line.length) + line);
 });
 
 test('a leading underscore and the signs of C++ and C# stay with their words', () => {
   const t = screen(relayed([`${cup(1, 1)}از _old و C++ و C# استفاده کن`], 40, 2), 40, 2);
   const line = `${joined('استفاده کن')} C# ${joined('و')} C++ ${joined('و')} _old ${joined('از')}`;
-  assert.equal(t.row(1), ' '.repeat(39 - line.length) + line);
+  assert.equal(t.row(1), ' '.repeat(40 - line.length) + line);
 });
 
 const visualOf = (r, y, l) => Array.from(r.scr[y].lmap).indexOf(l);

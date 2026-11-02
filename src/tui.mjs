@@ -269,13 +269,13 @@ function pipeRelay(child, { cursor, hello = false, filter = null, visual = false
       head = Buffer.concat([head, chunk]);
       const nl = head.indexOf(0x0a);
       if (nl < 0 && head.length < 256) return;
-      const m = /^rtlfix-conpty (\d+) (\d+) (\d+) (\d+)/.exec(head.subarray(0, Math.max(nl, 0)).toString('latin1'));
+      const m = /^rtlfix-conpty (\d+) (\d+) (\d+) (\d+)(?: ([01]))?/.exec(head.subarray(0, Math.max(nl, 0)).toString('latin1'));
       relay = new Relay({
         cols: (m && Number(m[3])) || process.stdout.columns,
         rows: (m && Number(m[4])) || process.stdout.rows,
         cursor: m ? [Number(m[1]), Number(m[2])] : null,
         visual,
-        markCells,
+        markCells: m && m[5] ? m[5] === '1' : markCells,
       });
       chunk = m ? head.subarray(nl + 1) : head;
       head = null;

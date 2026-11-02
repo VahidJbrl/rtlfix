@@ -83,7 +83,7 @@ test('the pseudo console helper builds, runs a program and passes on its exit co
       env: { ...env, RTLFIX_COMMAND: commandLine(process.execPath, ['-e', 'console.log("rtlfix-ok"); process.exit(3)'], env) },
     });
     assert.equal(r.status, 3, r.stderr);
-    assert.match(r.stdout, /^rtlfix-conpty \d+ \d+ \d+ \d+\n/);
+    assert.match(r.stdout, /^rtlfix-conpty \d+ \d+ \d+ \d+ [01]\n/);
     assert.match(r.stdout, /rtlfix-ok/);
     assert.equal(conptyHost(env), host);
   } finally {

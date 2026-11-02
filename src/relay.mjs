@@ -1930,7 +1930,11 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     width += units[k].w;
     if (markCells) marks += [...glyph[k]].length - 1;
   }
-  const limit = whole ? cols - 2 : b - 2;
+  const limit = whole ? cols - 1 : b - 2;
+  if (pl === 1 && marks && limit - width - marks + 1 < from) {
+    for (let k = 0; k < units.length; k++) if (glyph[k] !== null) glyph[k] = [...glyph[k]][0];
+    marks = 0;
+  }
   const start = pl === 1 ? Math.max(from, limit - width - marks + 1) : from;
   const fill = bceOf(b1 < b ? at[b1] : at[from]);
 

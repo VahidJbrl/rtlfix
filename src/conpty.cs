@@ -105,6 +105,10 @@ static class RtlfixConpty
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetConsoleMode(IntPtr h, uint mode);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetConsoleScreenBufferInfo(IntPtr h, out CONSOLE_SCREEN_BUFFER_INFO info);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool ReadConsoleInputW(IntPtr h, [Out] INPUT_RECORD[] buffer, uint length, out uint read);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool WriteConsoleW(IntPtr h, string text, uint length, out uint written, IntPtr reserved);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool ReadConsoleOutputCharacterW(IntPtr h, [Out] char[] text, uint length, COORD at, out uint read);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool FillConsoleOutputCharacterW(IntPtr h, char c, uint length, COORD at, out uint written);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetConsoleCursorPosition(IntPtr h, COORD at);
     [DllImport("kernel32.dll", SetLastError = true)] static extern int CreatePseudoConsole(COORD size, IntPtr input, IntPtr output, uint flags, out IntPtr pc);
     [DllImport("kernel32.dll", SetLastError = true)] static extern int ResizePseudoConsole(IntPtr pc, COORD size);
     [DllImport("kernel32.dll", SetLastError = true)] static extern void ClosePseudoConsole(IntPtr pc);
@@ -161,8 +165,9 @@ static class RtlfixConpty
             row = (short)(info.dwCursorPosition.Y - info.srWindow.Top);
             col = (short)(info.dwCursorPosition.X - info.srWindow.Left);
         }
+        int marks = MarkCells(cols);
         output = Console.OpenStandardOutput();
-        Send("rtlfix-conpty " + row + " " + col + " " + cols + " " + rows + "\n");
+        Send("rtlfix-conpty " + row + " " + col + " " + cols + " " + rows + " " + marks + "\n");
 
         SafeFileHandle inRead, inWrite, outRead, outWrite;
         if (!CreatePipe(out inRead, out inWrite, IntPtr.Zero, 0) || !CreatePipe(out outRead, out outWrite, IntPtr.Zero, 0))
@@ -297,6 +302,22 @@ static class RtlfixConpty
             }
             catch (IOException) { }
         }
+    }
+
+    static int MarkCells(short cols)
+    {
+        CONSOLE_SCREEN_BUFFER_INFO before, after;
+        if (!GetConsoleScreenBufferInfo(screen, out before)) return 1;
+        COORD at = before.dwCursorPosition;
+        char[] old = new char[2];
+        uint n;
+        if (at.X - before.srWindow.Left + 2 >= cols || !ReadConsoleOutputCharacterW(screen, old, 2, at, out n) || n != 2 || old[0] != ' ' || old[1] != ' ') return 1;
+        int cells = 1;
+        if (WriteConsoleW(screen, "x\u064b", 2, out n, IntPtr.Zero) && GetConsoleScreenBufferInfo(screen, out after) && after.dwCursorPosition.Y == at.Y)
+            cells = after.dwCursorPosition.X - at.X > 1 ? 1 : 0;
+        FillConsoleOutputCharacterW(screen, ' ', 2, at, out n);
+        SetConsoleCursorPosition(screen, at);
+        return cells;
     }
 
     static void Send(string text)

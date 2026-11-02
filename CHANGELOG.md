@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.5 (2026-11-01)
+
+Persian lines line up.
+
+- Persian lines now mirror Claude Code's own layout exactly, so paragraphs, list items and wrapped lines share the same right edge. Before, a line that filled the whole width of the terminal sat one column to the right of the others.
+- On Windows, a line with a mark such as the tanween in `تقریباً` lines up too. rtlfix now checks once at startup whether the terminal gives such marks a cell of their own, instead of assuming it does.
+
 ## 1.4.4 (2026-10-31)
 
 Numbers in front of English words.
