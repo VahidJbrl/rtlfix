@@ -8,6 +8,7 @@ rtlfix stays out of Claude Code's way.
 - On Windows, closing the terminal lets Claude Code shut down normally instead of stopping it at once.
 - On Windows, rtlfix finds the console host in current versions of VS Code and runs a private copy of it, so it holds no files that VS Code or Cursor need for their own updates.
 - On Linux and macOS, Ctrl+Z suspends Claude Code to the shell and `fg` brings it back.
+- On macOS, Claude Code and Qwen Code get the keyboard. Before, they ran in the background of their terminal and could not read what you typed.
 
 ## 1.4.5 (2026-11-01)
 

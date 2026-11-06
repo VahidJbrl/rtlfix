@@ -36,15 +36,16 @@ export function launcher(cmd) {
     `set -- ${cmd.map(shQuote).join(' ')}`,
     'if [ -n "${RTLFIX_SHELL+x}" ]; then SHELL=$RTLFIX_SHELL; export SHELL; else unset SHELL; fi',
     'unset RTLFIX_SHELL',
+    'if [ -n "${RTLFIX_QUIET+x}" ]; then unset BASH_SILENCE_DEPRECATION_WARNING RTLFIX_QUIET; fi',
+    'case $- in *i*) set +o history;; esac',
     'rtlfix_relay=',
     'if [ -n "${RTLFIX_SIZE+x}" ]; then rtlfix_relay=1; stty $RTLFIX_SIZE 2>/dev/null; stty iutf8 2>/dev/null; printf "\\033]rtlfix;tty;%s;%s\\007" "$(tty)" "$$"; unset RTLFIX_SIZE; fi',
     'command -v "$1" >/dev/null 2>&1 || { echo "rtlfix: $1: command not found" >&2; exit 127; }',
     'set -m',
-    'exec 3>&2 2>/dev/null',
-    '"$@" 2>&3 3>&-',
+    'if [ -n "${BASH_VERSION+x}" ] && [ "${-#*i}" = "$-" ]; then "$@"; else exec 3>&2 2>/dev/null; "$@" 2>&3 3>&-; fi',
     's=$?',
-    'while [ "$s" -gt 128 ] && jobs %% >/dev/null; do',
-    '  if [ -n "$rtlfix_relay" ]; then stty -echo; printf "\\033]rtlfix;stop\\007"; read -r _; stty echo; fi',
+    'while [ "$s" -gt 128 ] && jobs %% >/dev/null 2>&1; do',
+    '  if [ -n "$rtlfix_relay" ]; then stty -echo 2>/dev/null; printf "\\033]rtlfix;stop\\007"; read -r _; stty echo 2>/dev/null; fi',
     '  fg %% >/dev/null',
     '  s=$?',
     'done',
@@ -419,9 +420,13 @@ export function tuiMain(argv) {
   const scriptEnv = { ...env, SHELL: '/bin/sh', RTLFIX_SIZE: `rows ${process.stdout.rows} cols ${process.stdout.columns}` };
   delete scriptEnv.RTLFIX_SHELL;
   if (process.env.SHELL !== undefined) scriptEnv.RTLFIX_SHELL = process.env.SHELL;
+  if (mac && scriptEnv.BASH_SILENCE_DEPRECATION_WARNING === undefined) {
+    scriptEnv.BASH_SILENCE_DEPRECATION_WARNING = '1';
+    scriptEnv.RTLFIX_QUIET = '1';
+  }
   const scriptArgs = ['-q', '-e', '-c', launcher(cmd), '/dev/null'];
   const [file, args] = mac
-    ? ['/bin/bash', ['-c', 'exec script -q /dev/null /bin/sh -c "$1" < <(exec cat)', 'rtlfix', launcher(cmd)]]
+    ? ['/bin/bash', ['-c', 'exec script -q /dev/null /bin/bash --norc --noprofile -i -c "$1" < <(exec cat)', 'rtlfix', launcher(cmd)]]
     : works('setpriv', ['--pdeathsig', 'TERM', 'true'])
       ? ['setpriv', ['--pdeathsig', 'TERM', 'script', ...scriptArgs]]
       : ['script', scriptArgs];

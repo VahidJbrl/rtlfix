@@ -66,6 +66,14 @@ test('the launcher resumes a program that suspends itself', { skip: !hasScript }
   assert.match(r.stdout, /before[\s\S]*after/);
 });
 
+test('the launcher makes the program the foreground job, whichever shell runs it', { skip: !hasScript }, () => {
+  for (const shell of ['/bin/sh', '/bin/bash']) {
+    const r = spawnSync('script', ['-q', '-e', '-c', launcher(['sh', '-c', 'ps -o pgid=,tpgid= -p $$']), '/dev/null'], { encoding: 'utf8', env: { ...process.env, SHELL: shell }, input: '' });
+    const [group, foreground] = r.stdout.trim().split(/\s+/);
+    assert.equal(group, foreground, shell);
+  }
+});
+
 test('the launcher reports a missing program', { skip: !hasScript }, () => {
   const r = runLauncher(['no-such-program-rtlfix']);
   assert.equal(r.status, 127);
@@ -113,7 +121,7 @@ test('in a terminal the program gets its own pseudo-terminal and Persian is draw
   assert.ok(!r.stdout.includes('rtlfix;tty'));
 });
 
-test('a program that suspends itself gives the terminal back to the shell, and fg brings it back', { skip: !(hasScript || process.platform === 'darwin') }, async () => {
+function interactiveShell() {
   const [file, args] = process.platform === 'darwin'
     ? ['/bin/bash', ['-c', 'exec script -q /dev/null /bin/bash --norc --noprofile -i < <(exec cat)']]
     : ['script', ['-q', '-e', '-c', 'bash --norc --noprofile -i', '/dev/null']];
@@ -125,13 +133,34 @@ test('a program that suspends itself gives the terminal back to the shell, and f
     for (let i = 0; i < 400 && !re.test(out); i++) await new Promise((done) => setTimeout(done, 50));
     assert.match(out, re);
   };
+  return { p, closed, shows, output: () => out };
+}
+
+test('in a terminal the program reads the keyboard', { skip: !(hasScript || process.platform === 'darwin') }, async () => {
+  const { p, closed, shows } = interactiveShell();
+  try {
+    p.stdin.write(`"${process.execPath}" "${BIN}" tui sh -c 'echo RE""ADY; IFS= read -r x; echo got=$x; exit 4'\n`);
+    await shows(/READY/);
+    p.stdin.write('hello\n');
+    await shows(/got=hello/);
+    p.stdin.write('echo status=$?\n');
+    await shows(/status=4/);
+    p.stdin.write('exit\n');
+    await closed;
+  } finally {
+    p.kill('SIGKILL');
+  }
+});
+
+test('a program that suspends itself gives the terminal back to the shell, and fg brings it back', { skip: !(hasScript || process.platform === 'darwin') }, async () => {
+  const { p, closed, shows, output } = interactiveShell();
   try {
     p.stdin.write(`"${process.execPath}" "${BIN}" tui sh -c 'echo BE""FORE; kill -TSTP $$; echo AF""TER; exit 3'\n`);
     await shows(/BEFORE/);
     await shows(/Stopped/);
     p.stdin.write('echo IN""SHELL\n');
     await shows(/INSHELL/);
-    assert.doesNotMatch(out, /AFTER/);
+    assert.doesNotMatch(output(), /AFTER/);
     p.stdin.write('fg\n');
     await shows(/AFTER/);
     p.stdin.write('echo status=$?\n');
