@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.6 (2026-11-06)
+
+rtlfix stays out of Claude Code's way.
+
+- On Windows, programs that Claude Code leaves running keep running after it exits, as they do without rtlfix. Before, closing Claude Code also closed anything started from it, such as a long job, a browser or an editor.
+- On Windows, closing the terminal lets Claude Code shut down normally instead of stopping it at once.
+- On Windows, rtlfix finds the console host in current versions of VS Code and runs a private copy of it, so it holds no files that VS Code or Cursor need for their own updates.
+- On Linux and macOS, Ctrl+Z suspends Claude Code to the shell and `fg` brings it back.
+
 ## 1.4.5 (2026-11-01)
 
 Persian lines line up.

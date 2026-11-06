@@ -36,13 +36,18 @@ export function launcher(cmd) {
     `set -- ${cmd.map(shQuote).join(' ')}`,
     'if [ -n "${RTLFIX_SHELL+x}" ]; then SHELL=$RTLFIX_SHELL; export SHELL; else unset SHELL; fi',
     'unset RTLFIX_SHELL',
-    'if [ -n "${RTLFIX_SIZE+x}" ]; then stty $RTLFIX_SIZE 2>/dev/null; stty iutf8 2>/dev/null; printf "\\033]rtlfix;tty;%s;%s\\007" "$(tty)" "$$"; unset RTLFIX_SIZE; fi',
+    'rtlfix_relay=',
+    'if [ -n "${RTLFIX_SIZE+x}" ]; then rtlfix_relay=1; stty $RTLFIX_SIZE 2>/dev/null; stty iutf8 2>/dev/null; printf "\\033]rtlfix;tty;%s;%s\\007" "$(tty)" "$$"; unset RTLFIX_SIZE; fi',
     'command -v "$1" >/dev/null 2>&1 || { echo "rtlfix: $1: command not found" >&2; exit 127; }',
     'set -m',
     'exec 3>&2 2>/dev/null',
     '"$@" 2>&3 3>&-',
     's=$?',
-    'while [ "$s" -gt 128 ] && jobs %% >/dev/null; do fg %% >/dev/null; s=$?; done',
+    'while [ "$s" -gt 128 ] && jobs %% >/dev/null; do',
+    '  if [ -n "$rtlfix_relay" ]; then stty -echo; printf "\\033]rtlfix;stop\\007"; read -r _; stty echo; fi',
+    '  fg %% >/dev/null',
+    '  s=$?',
+    'done',
     'exit "$s"',
   ].join('\n');
 }
@@ -147,7 +152,7 @@ function fixClipboard(from, to) {
   } catch { }
 }
 
-function pipeRelay(child, { cursor, hello = false, filter = null, visual = false, markCells = false, onTty = null } = {}) {
+function pipeRelay(child, { cursor, hello = false, filter = null, visual = false, markCells = false, onTty = null, onStop = null } = {}) {
   let relay = hello ? null : new Relay({ cols: process.stdout.columns, rows: process.stdout.rows, cursor, visual });
   let head = Buffer.alloc(0);
   let tail = Buffer.alloc(0);
@@ -297,6 +302,10 @@ function pipeRelay(child, { cursor, hello = false, filter = null, visual = false
       if (kind === 'size' && Number(a) > 0 && Number(b) > 0) render(() => { relay.resize(Number(a), Number(b)); return Buffer.alloc(0); }, Buffer.alloc(0));
       if (kind === 'in' && a) child.stdin.write(input(Buffer.from(a, 'hex')));
       if (kind === 'tty' && a && onTty) onTty(a, Number(b));
+      if (kind === 'stop' && onStop) {
+        render(() => relay.tick(), Buffer.alloc(0));
+        onStop();
+      }
       from = end + 1;
     }
     let keep = text.lastIndexOf('\x1b');
@@ -346,7 +355,7 @@ async function tuiWindows(cmd, env) {
   }
   const hostEnv = { ...env, RTLFIX_COMMAND: windows.commandLine(program, cmd.slice(1), env) };
   const library = windows.editorConpty(env);
-  if (library) hostEnv.RTLFIX_CONPTY = library;
+  if (library) hostEnv.RTLFIX_CONPTY = windows.privateConpty(library, env);
   const child = spawn(host, [], { stdio: ['pipe', 'pipe', 'inherit'], env: hostEnv });
   child.stdin.on('error', () => { });
   child.on('error', (e) => {
@@ -431,6 +440,14 @@ export function tuiMain(argv) {
   const io = pipeRelay(child, {
     cursor,
     onTty: (path, pid) => { tty = path; leader = pid; },
+    onStop: () => {
+      if (saved) {
+        try { stty([saved]); } catch { }
+        try { process.kill(process.pid, 'SIGTSTP'); } catch { }
+        try { stty(['raw', '-echo']); } catch { }
+      }
+      keys.write('\n');
+    },
     filter: (chunk) => {
       if (!stopping) return chunk;
       const text = chunk.toString('latin1').replace(/\r?\n?Session terminated, killing shell\.\.\.|\s*\.\.\.killed\.\r?\n?/g, '');

@@ -1,4 +1,4 @@
-import { existsSync, statSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, statSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync, rmSync, copyFileSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { homedir, release } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 
 const SOURCE = new URL('./conpty.cs', import.meta.url);
 const META = /([()\][%!^"`<>&|;, *?])/g;
+const CONSOLE_FILES = ['conpty.dll', 'OpenConsole.exe'];
 
 const envGet = (env, name) => {
   const key = Object.keys(env).find((k) => k.toUpperCase() === name);
@@ -129,12 +130,54 @@ export function editorConpty(env = process.env) {
     for (const name of ['Microsoft VS Code', 'Microsoft VS Code Insiders', 'cursor', 'Windsurf', 'VSCodium']) roots.push(join(base, name));
   }
   for (const root of roots) {
-    for (const modules of ['node_modules', 'node_modules.asar.unpacked']) {
-      const dir = join(root, 'resources', 'app', modules, 'node-pty', 'build', 'Release', 'conpty');
-      if (existsSync(join(dir, 'conpty.dll')) && existsSync(join(dir, 'OpenConsole.exe'))) return join(dir, 'conpty.dll');
+    for (const app of [root, ...versions(root)]) {
+      for (const modules of ['node_modules', 'node_modules.asar.unpacked']) {
+        const dir = join(app, 'resources', 'app', modules, 'node-pty', 'build', 'Release', 'conpty');
+        if (CONSOLE_FILES.every((name) => existsSync(join(dir, name)))) return join(dir, 'conpty.dll');
+      }
     }
   }
   return null;
+}
+
+function versions(root) {
+  try {
+    return readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^[0-9a-f]{6,40}$/.test(entry.name))
+      .map((entry) => join(root, entry.name))
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  } catch {
+    return [];
+  }
+}
+
+export function privateConpty(library, env = process.env) {
+  try {
+    const from = dirname(library);
+    const stamp = CONSOLE_FILES.map((name) => {
+      const file = statSync(join(from, name));
+      return `${name}:${file.size}:${file.mtimeMs}`;
+    }).join(';');
+    const dir = cacheDir(env);
+    const home = join(dir, `console-${createHash('sha256').update(stamp).digest('hex').slice(0, 12)}`);
+    if (!CONSOLE_FILES.every((name) => existsSync(join(home, name)))) {
+      const tmp = `${home}-${process.pid}`;
+      mkdirSync(tmp, { recursive: true });
+      for (const name of CONSOLE_FILES) copyFileSync(join(from, name), join(tmp, name));
+      try {
+        renameSync(tmp, home);
+      } catch {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+    for (const name of readdirSync(dir)) {
+      if (!/^console-[0-9a-f]{12}$/.test(name) || join(dir, name) === home) continue;
+      try { rmSync(join(dir, name), { recursive: true, force: true }); } catch { }
+    }
+    return CONSOLE_FILES.every((name) => existsSync(join(home, name))) ? join(home, 'conpty.dll') : library;
+  } catch {
+    return library;
+  }
 }
 
 export function windowsBuild() {

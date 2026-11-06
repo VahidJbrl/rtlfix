@@ -112,3 +112,33 @@ test('in a terminal the program gets its own pseudo-terminal and Persian is draw
   assert.ok(r.stdout.includes([...preShapeArabic('سلام')].reverse().join('')), r.stdout);
   assert.ok(!r.stdout.includes('rtlfix;tty'));
 });
+
+test('a program that suspends itself gives the terminal back to the shell, and fg brings it back', { skip: !(hasScript || process.platform === 'darwin') }, async () => {
+  const [file, args] = process.platform === 'darwin'
+    ? ['/bin/bash', ['-c', 'exec script -q /dev/null /bin/bash --norc --noprofile -i < <(exec cat)']]
+    : ['script', ['-q', '-e', '-c', 'bash --norc --noprofile -i', '/dev/null']];
+  const p = spawn(file, args, { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, SHELL: '/bin/sh', PS1: 'ready> ', RTLFIX_TUI: '' } });
+  let out = '';
+  p.stdout.on('data', (d) => { out += d; });
+  const closed = new Promise((done) => p.on('close', done));
+  const shows = async (re) => {
+    for (let i = 0; i < 400 && !re.test(out); i++) await new Promise((done) => setTimeout(done, 50));
+    assert.match(out, re);
+  };
+  try {
+    p.stdin.write(`"${process.execPath}" "${BIN}" tui sh -c 'echo BE""FORE; kill -TSTP $$; echo AF""TER; exit 3'\n`);
+    await shows(/BEFORE/);
+    await shows(/Stopped/);
+    p.stdin.write('echo IN""SHELL\n');
+    await shows(/INSHELL/);
+    assert.doesNotMatch(out, /AFTER/);
+    p.stdin.write('fg\n');
+    await shows(/AFTER/);
+    p.stdin.write('echo status=$?\n');
+    await shows(/status=3/);
+    p.stdin.write('exit\n');
+    await closed;
+  } finally {
+    p.kill('SIGKILL');
+  }
+});

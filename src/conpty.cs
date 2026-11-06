@@ -11,15 +11,12 @@ static class RtlfixConpty
     const uint ENABLE_EXTENDED_FLAGS = 0x0080;
     const uint ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
     const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
-    const uint CREATE_SUSPENDED = 0x00000004;
     const int STARTF_USESTDHANDLES = 0x00000100;
     const uint PSEUDOCONSOLE_INHERIT_CURSOR = 0x1;
     const ushort KEY_EVENT = 0x0001;
     const ushort VK_MENU = 0x12;
     const ushort WINDOW_BUFFER_SIZE_EVENT = 0x0004;
     const uint INFINITE = 0xFFFFFFFF;
-    const int JobObjectExtendedLimitInformation = 9;
-    const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
     static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -68,34 +65,6 @@ static class RtlfixConpty
     [StructLayout(LayoutKind.Sequential)]
     struct PROCESS_INFORMATION { public IntPtr hProcess; public IntPtr hThread; public int dwProcessId; public int dwThreadId; }
 
-    [StructLayout(LayoutKind.Sequential)]
-    struct JOBOBJECT_BASIC_LIMIT_INFORMATION
-    {
-        public long PerProcessUserTimeLimit;
-        public long PerJobUserTimeLimit;
-        public uint LimitFlags;
-        public UIntPtr MinimumWorkingSetSize;
-        public UIntPtr MaximumWorkingSetSize;
-        public uint ActiveProcessLimit;
-        public UIntPtr Affinity;
-        public uint PriorityClass;
-        public uint SchedulingClass;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct IO_COUNTERS { public ulong A, B, C, D, E, F; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-    {
-        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
-        public IO_COUNTERS IoInfo;
-        public UIntPtr ProcessMemoryLimit;
-        public UIntPtr JobMemoryLimit;
-        public UIntPtr PeakProcessMemoryUsed;
-        public UIntPtr PeakJobMemoryUsed;
-    }
-
     delegate bool HandlerRoutine(uint ctrlType);
     delegate int CreateConsole(COORD size, IntPtr input, IntPtr output, uint flags, out IntPtr pc);
     delegate int ResizeConsole(IntPtr pc, COORD size);
@@ -117,13 +86,8 @@ static class RtlfixConpty
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returnSize);
     [DllImport("kernel32.dll", SetLastError = true)] static extern void DeleteProcThreadAttributeList(IntPtr list);
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool CreateProcessW(string application, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory, ref STARTUPINFOEX startup, out PROCESS_INFORMATION info);
-    [DllImport("kernel32.dll", SetLastError = true)] static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint ms);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
-    [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr process, uint code);
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateJobObjectW(IntPtr attributes, string name);
-    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, uint size);
-    [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetConsoleCtrlHandler(HandlerRoutine handler, bool add);
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr LoadLibraryW(string name);
@@ -209,23 +173,13 @@ static class RtlfixConpty
         startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
         startup.lpAttributeList = list;
         if (!CreateProcessW(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, false,
-            EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED, IntPtr.Zero, null, ref startup, out child))
+            EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero, null, ref startup, out child))
         {
             int error = Marshal.GetLastWin32Error();
             close(console);
             Console.Error.WriteLine("rtlfix: cannot start " + commandLine + " (" + new System.ComponentModel.Win32Exception(error).Message + ")");
             return error == 2 || error == 3 ? 127 : 1;
         }
-        IntPtr job = CreateJobObjectW(IntPtr.Zero, null);
-        if (job != IntPtr.Zero)
-        {
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref limits, (uint)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)));
-            AssignProcessToJobObject(job, child.hProcess);
-        }
-        ResumeThread(child.hThread);
-
         handler = new HandlerRoutine(OnControl);
         SetConsoleCtrlHandler(handler, true);
         if (GetConsoleMode(input, out savedMode))
@@ -415,7 +369,6 @@ static class RtlfixConpty
     static bool OnControl(uint type)
     {
         if (type == 0 || type == 1) return true;
-        TerminateProcess(child.hProcess, 1);
         Restore();
         return false;
     }
