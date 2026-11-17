@@ -1637,6 +1637,8 @@ const isSpace = (ch) =>
   ch === ' ' || ch === '\u00a0' || ch === '\u3000' || ch === '\u202f' ||
   ch === '\u205f' || (ch >= '\u2000' && ch <= '\u200a');
 const blankCell = (ch, at) => isSpace(ch) && !at.visible;
+const drawnCursor = (ch, at) =>
+  isSpace(ch[0]) && [...ch].slice(1).every((c) => isFormatChar(c.codePointAt(0))) && Boolean(at.st.bg || at.st.v || at.st.u);
 
 const isMarker = (cp) => {
   if (cp === 0x20 || cp === 0x29c9) return false;
@@ -2007,6 +2009,18 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
       c = levels[u] & 1 ? vis[u] - 1 : vis[u] + units[u].w;
     }
     cmap[x] = Math.max(0, Math.min(cols - 1, c));
+  }
+
+  if (!visual && cursorX >= from && cursorX < b1) {
+    let kc = 0;
+    while (kc < units.length && units[kc].x < cursorX) kc++;
+    const u = units[kc];
+    const t = cmap[cursorX];
+    if (u && u.x === cursorX && vis[kc] >= 0 && vis[kc] !== t && t >= a && t < b && drawnCursor(u.text, u.at)) {
+      const s = dat[vis[kc]];
+      dat[vis[kc]] = dat[t];
+      dat[t] = s;
+    }
   }
 }
 

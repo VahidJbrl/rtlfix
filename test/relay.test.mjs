@@ -75,6 +75,19 @@ test('a full-row redraw with a drawn cursor cell', () => {
   assert.ok(!out.toString('utf8').includes('\u200b'));
 });
 
+test('a drawn cursor after an English word in Persian text sits where the next letter goes', () => {
+  for (const style of [`${ESC}[48;2;212;212;212m`, `${ESC}[4m`]) {
+    const row = `${ESC}[38;5;1m* ${ESC}[39mدر california${style} ${ESC}[0m\u200b`;
+    const t = screen(relayed([frame(`${cup(2, 1)}${ESC}[2K${row}${cup(2, 16)}`)], 30, 3), 30, 3);
+    const line = `california ${joined('در')} *`;
+    assert.equal(t.row(2), ' '.repeat(30 - line.length) + line);
+    const x = 30 - line.length + 10;
+    assert.deepEqual(t.cursor, [2, x + 1]);
+    const styled = t.term.scr[1].at.map((a, k) => (a.st.bg || a.st.u ? k : -1)).filter((k) => k >= 0);
+    assert.deepEqual(styled, [x]);
+  }
+});
+
 test('brackets in an RTL paragraph are mirrored', () => {
   const t = screen(relayed([`${cup(1, 1)}سلام (دنیا)`], 30, 2), 30, 2);
   assert.equal(t.row(1).trim(), `(${joined('دنیا')}) ${joined('سلام')}`);

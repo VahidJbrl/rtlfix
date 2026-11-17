@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.9 (2026-11-17)
+
+One cursor in Qwen Code's prompt.
+
+- Qwen Code draws its own cursor in the prompt: a highlighted space on Linux and macOS, an underlined one on Windows. When an English word ended a Persian line, rtlfix put that cell at the far left of the line while the real cursor stood after the English word, so a second cursor or a stray underline showed until the next space. Now both sit where the next letter goes.
+
 ## 1.4.8 (2026-11-17)
 
 Qwen Code's scrollbar stays on the right.
