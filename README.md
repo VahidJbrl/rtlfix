@@ -67,7 +67,7 @@ npm install -g --prefix ~/.local github:VahidJbrl/rtlfix
 Without `git`, install the release archive instead:
 
 ```bash
-npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.4.6.tar.gz
+npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.4.7.tar.gz
 ```
 
 **Without npm**
@@ -133,7 +133,7 @@ screen   ◄──────  rtlfix  ◄────────────�
 - The agent runs in its own pseudo-terminal. Your keystrokes, mouse and paste reach it unchanged, with two exceptions on right-to-left lines: the left and right arrow keys swap, so the cursor moves the way the line is drawn, and mouse clicks and selections point at the character drawn under the pointer.
 - rtlfix keeps a model of the screen that follows xterm.js, the terminal inside VS Code, including its character widths, wrapping, scrolling, scroll regions, the alternate screen, tab stops, line-drawing characters and hyperlinks. It asks the terminal where the cursor is when it starts, so it also works when the agent starts halfway down the screen.
 - Lines without right-to-left text reach your terminal unchanged.
-- Lines that contain Persian, Arabic or Hebrew are redrawn: the [Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) puts them in visual order, letters are replaced by their joined forms, brackets are mirrored, the paragraph is aligned to the right, and the cursor is placed at the visual insertion point. A line that is mostly Persian reads right to left even when it starts with an English word; English sentences and code keep their direction. Lines are drawn before they scroll into the scrollback, so long answers read correctly there too.
+- Lines that contain Persian, Arabic or Hebrew are redrawn: the [Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) puts them in visual order, letters are replaced by their joined forms and drawn upright, brackets are mirrored, the paragraph is aligned to the right, and the cursor is placed at the visual insertion point. A line that is mostly Persian reads right to left even when it starts with an English word; English sentences and code keep their direction. Lines are drawn before they scroll into the scrollback, so long answers read correctly there too.
 - It only changes what is displayed. What you type, the conversation history and what the model sees stay exactly as they are.
 - Window resizes, Ctrl+Z and closing the terminal are handled; when the terminal closes, the agent closes with it.
 - On macOS, rtlfix uses the `script` that comes with macOS. On Windows, a small pseudo console helper takes the place of `script`. It is written in C# and built on first use with the compiler that comes with Windows, then kept in `%LOCALAPPDATA%\rtlfix`. In VS Code, Cursor and similar editors it uses a private copy of the console host the editor ships with, which passes the agent's output through exactly as written and leaves the editor free to update itself.

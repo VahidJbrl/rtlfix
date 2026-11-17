@@ -305,6 +305,27 @@ test('a Persian line after an English label such as recap: reads right to left',
   assert.equal(english.row(1), `※ recap: fixed the ${joined('سلام')} bug`);
 });
 
+test('Persian letters are drawn upright where the program asks for italic, and keep their other styles', () => {
+  const words = 'سلام دنیا';
+  const lines = [
+    screen(relayed([`${cup(1, 1)}${ESC}[2;3m\u258e ${words} in config.py${ESC}[0m`], 40, 3), 40, 3),
+    screen(relayed([`${cup(1, 1)}${ESC}[2;3m\u258e ${rev(words)} in config.py${ESC}[0m`], 40, 3, { visual: true }), 40, 3),
+  ];
+  const persian = new Set([...joined(words)].filter((c) => c !== ' '));
+  for (const t of lines) {
+    const row = t.term.scr[0];
+    let seen = 0;
+    for (let x = 0; x < 40; x++) {
+      const c = row.ch[x];
+      if (c === '' || c === ' ') continue;
+      if (persian.has(c)) seen++;
+      assert.equal(Boolean(row.at[x].st.i), !persian.has(c), c);
+      assert.equal(row.at[x].st.d, true, c);
+    }
+    assert.equal(seen, persian.size);
+  }
+});
+
 test('Claude Code on Windows: the recap line is turned back and reads right to left', () => {
   const plain = screen(relayed([`${cup(1, 1)}※ recap: ${rev('سلام دنیا')}`], 40, 3, { visual: true }), 40, 3);
   const line = joined('سلام دنیا') + ' :recap ※';

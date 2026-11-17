@@ -2,7 +2,7 @@ import {
   bidiClass, isRtlLetter, resolveLevels, visualOrder, mirrorOf, paragraphLevel, bracketType, fromVisual, leansRtl,
   L, R, AL, EN, ET, ES, AN, ON,
 } from './bidi.mjs';
-import { shapeCps } from './shaping.mjs';
+import { shapeCps, isArabic } from './shaping.mjs';
 import { cpWidth } from './width.mjs';
 
 const DEC_SPECIAL = '◆▒␉␌␍␊°±␤␋┘┐┌└┼⎺⎻─⎼⎽├┤┴┬│≤≥π≠£·';
@@ -62,6 +62,7 @@ function makeAttr(st, link = null) {
       bce: null,
       link,
       plain: null,
+      up: null,
     };
     ATTRS.set(key, a);
   }
@@ -73,6 +74,15 @@ export const DEFAULT_ATTR = makeAttr({});
 function bceOf(a) {
   if (!a.bce) a.bce = a.st.bg ? makeAttr({ bg: a.st.bg }) : DEFAULT_ATTR;
   return a.bce;
+}
+
+function uprightOf(a) {
+  if (!a.up) {
+    const st = { ...a.st };
+    delete st.i;
+    a.up = makeAttr(st, a.link);
+  }
+  return a.up;
 }
 
 function withLink(a, link) {
@@ -2000,7 +2010,8 @@ function emitCells(ch, at, cols) {
   for (let x = 0; x < end; x++) {
     let c = ch[x];
     if (c === '') continue;
-    const a = at[x];
+    let a = at[x];
+    if (a.st.i && isArabic(c.codePointAt(0))) a = uprightOf(a);
     if (a !== cur) {
       if (a.link !== link) {
         if (link) s += '\x1b]8;;\x1b\\';

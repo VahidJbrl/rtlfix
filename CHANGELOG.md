@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.7 (2026-11-16)
+
+Persian in quotes is readable.
+
+- Persian and Arabic letters are now drawn upright where the program asks for italic, as in Claude Code's quotes, its recap line and `*emphasis*`. Terminals have no italic font that joins these letters, so italic Persian came out as loose letters in a different font. English text keeps its italic, and colours, bold and dim stay as they were. Piped text gets the same treatment.
+
 ## 1.4.6 (2026-11-06)
 
 rtlfix stays out of Claude Code's way.

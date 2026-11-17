@@ -36,6 +36,12 @@ test('colours stay on the words they belong to', () => {
   assert.ok(!out.replace(/\x1b\[[0-9;]*m/g, '').includes('\x1b'));
 });
 
+test('Persian letters are written upright inside italic text', () => {
+  assert.equal(visualText('\x1b[3mسلام world\x1b[0m'), `\x1b[0m\x1b[3mworld \x1b[0m\x1b[3m\x1b[23m${vis('سلام')}\x1b[0m`);
+  assert.equal(visualText('\x1b[1;3mسلام\x1b[23m دنیا'), `\x1b[0m\x1b[1;3m\x1b[23m${vis('دنیا')} ${vis('سلام')}\x1b[0m\x1b[1;3m\x1b[23m`);
+  assert.equal(visualText('\x1b[38;5;3mسلام\x1b[0m'), `\x1b[0m\x1b[38;5;3m${vis('سلام')}\x1b[0m`);
+});
+
 test('harakat stay on their letters', () => {
   const shaped = [...preShapeArabic('بَد')];
   assert.equal(visualText('بَد'), shaped[2] + shaped[0] + shaped[1]);

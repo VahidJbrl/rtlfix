@@ -36,6 +36,10 @@ function neighbour(types, i, dir) {
 const joinsBack = (t) => t === DUAL || t === LEFT || t === CAUSING;
 const joinsAhead = (t) => t === DUAL || t === RIGHT || t === CAUSING;
 
+export const isArabic = (cp) =>
+  (cp >= 0x0600 && cp <= 0x06ff) || (cp >= 0x0750 && cp <= 0x077f) || (cp >= 0x0870 && cp <= 0x08ff) ||
+  (cp >= 0xfb50 && cp <= 0xfdff) || (cp >= 0xfe70 && cp <= 0xfefe);
+
 export function shapeCps(cps) {
   const n = cps.length;
   const out = cps.slice();

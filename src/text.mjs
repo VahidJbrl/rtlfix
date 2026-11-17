@@ -1,5 +1,5 @@
 import { isRtlLetter, paragraphLevel, resolveLevels, visualOrder, mirrorOf, leansRtl } from './bidi.mjs';
-import { shapeCps } from './shaping.mjs';
+import { shapeCps, isArabic } from './shaping.mjs';
 import { cpWidth } from './width.mjs';
 
 const ESCAPE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[ -/]*[0-~]?)/y;
@@ -17,7 +17,18 @@ export function hasRtl(text) {
 }
 
 export function newState() {
-  return { sgr: '', link: '' };
+  return { sgr: '', link: '', italic: false };
+}
+
+function italicAfter(italic, body) {
+  const p = body.split(';');
+  for (let i = 0; i < p.length; i++) {
+    const t = p[i];
+    if (t === '' || t === '0' || t === '23') italic = false;
+    else if (t === '3') italic = true;
+    else if (t === '38' || t === '48' || t === '58') i += p[i + 1] === '5' ? 2 : p[i + 1] === '2' ? 4 : 0;
+  }
+  return italic;
 }
 
 function applyEscape(state, seq) {
@@ -25,6 +36,7 @@ function applyEscape(state, seq) {
     const body = seq.slice(2, -1);
     if (body === '' || body === '0') state.sgr = '';
     else state.sgr += seq;
+    state.italic = italicAfter(state.italic, body);
     return true;
   }
   if (seq.startsWith('\x1b]8;')) {
@@ -57,14 +69,14 @@ export function tokenize(line, state) {
       cells[cells.length - 1].extra.push(cp);
       continue;
     }
-    cells.push({ cp, extra: [], sgr: state.sgr, link: state.link });
+    cells.push({ cp, extra: [], sgr: state.sgr, link: state.link, italic: state.italic });
   }
   return { cells, other };
 }
 
 function render(cells, order, glyph) {
   let s = '';
-  let sgr = '';
+  let cur = '';
   let link = '';
   let styled = false;
   for (const k of order) {
@@ -76,9 +88,10 @@ function render(cells, order, glyph) {
       link = c.link;
       if (link) s += link;
     }
-    if (c.sgr !== sgr) {
-      s += '\x1b[0m' + c.sgr;
-      sgr = c.sgr;
+    const sgr = c.italic && isArabic(c.cp) ? c.sgr + '\x1b[23m' : c.sgr;
+    if (sgr !== cur) {
+      s += '\x1b[0m' + sgr;
+      cur = sgr;
       styled = true;
     }
     s += g;
