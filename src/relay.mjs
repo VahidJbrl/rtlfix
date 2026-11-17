@@ -1587,14 +1587,22 @@ export class Relay {
     row.x0 = -1;
     row.dep = false;
     row.soft = false;
+    const edge = !src && cols > 2 && isEdge(lay.ch[cols - 1]) && blankCell(lay.ch[cols - 2], lay.at[cols - 2]);
     for (let x = 0; x <= cols; x++) {
-      if (x < cols && !isColumnRule(lay.ch[x])) continue;
+      if (x < cols && !isColumnRule(lay.ch[x]) && !(edge && x === cols - 1)) continue;
       if (x > a) {
-        const whole = a === 0 && x === cols;
+        const whole = a === 0 && (x === cols || (edge && x === cols - 1));
         const cell = !whole && above && above.segs ? above.segs.find((g) => g.a === a && g.b === x) : null;
         layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : cell, whole ? below : null, cols, this.visual, this.markCells, src, this.drawn);
       }
       a = x + 1;
+    }
+    if (edge) {
+      dch[cols - 1] = lay.ch[cols - 1];
+      dat[cols - 1] = lay.at[cols - 1];
+      cmap[cols - 1] = cols - 1;
+      vmap[cols - 1] = cols - 1;
+      lmap[cols - 1] = cols - 1;
     }
     row.segs = maps.segs;
     row.cmap = cmap;
@@ -1623,6 +1631,7 @@ function rowHasRtl(row) {
 }
 
 const isColumnRule = (ch) => ch === '│' || ch === '┃' || ch === '║' || ch === '┆' || ch === '┊';
+const isEdge = (ch) => isColumnRule(ch) || (ch >= '\u2580' && ch <= '\u259f');
 
 const isSpace = (ch) =>
   ch === ' ' || ch === '\u00a0' || ch === '\u3000' || ch === '\u202f' ||
@@ -1940,7 +1949,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     width += units[k].w;
     if (markCells) marks += [...glyph[k]].length - 1;
   }
-  const limit = whole ? cols - 1 : b - 2;
+  const limit = whole ? (b < cols && m0 === a ? b - 1 : cols - 1) : b - 2;
   if (pl === 1 && marks && limit - width - marks + 1 < from) {
     for (let k = 0; k < units.length; k++) if (glyph[k] !== null) glyph[k] = [...glyph[k]][0];
     marks = 0;

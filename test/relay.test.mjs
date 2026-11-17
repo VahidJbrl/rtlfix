@@ -361,6 +361,19 @@ test('a mouse event on a right-to-left line points at the character drawn there'
   assert.equal(sent(r, `\x1b[M ${String.fromCharCode(32 + 30)}!`), `\x1b[M ${String.fromCharCode(32 + 1)}!`);
 });
 
+test('a scrollbar in the last column stays there and the text beside it does not move', () => {
+  const line = `${cup(1, 5)}سلام دنیا in config.py`;
+  const plain = screen(relayed([line], 40, 3), 40, 3).row(1);
+  for (const bar of ['\u2502', '\u2588']) {
+    const r = new Relay({ cols: 40, rows: 3 });
+    const out = Buffer.concat([r.push(Buffer.from(`${line}${cup(1, 40)}${ESC}[2m${bar}${ESC}[0m`)), r.tick()]);
+    assert.equal(screen(out, 40, 3).row(1), plain.padEnd(39) + bar);
+    assert.equal(sent(r, '\x1b[<0;40;1M'), '\x1b[<0;40;1M');
+  }
+  const words = joined('سلام دنیا');
+  assert.equal(screen(relayed([`${cup(1, 1)}سلام دنیا${cup(1, 40)}\u2588`], 40, 3), 40, 3).row(1), ' '.repeat(39 - words.length) + words + '\u2588');
+});
+
 test('Claude Code on Windows: a mouse event on an answer points at the cell Claude Code drew', () => {
   const r = new Relay({ cols: 30, rows: 3, visual: true });
   r.push(Buffer.from(`${cup(1, 1)}${rev('سلام')}${cup(3, 1)}`));

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.8 (2026-11-17)
+
+Qwen Code's scrollbar stays on the right.
+
+- Qwen Code shows a scrollbar in the last column for a moment after each scroll or update. On lines with Persian, rtlfix turned it around with the text, so thick bars flashed on the left of the text. It now stays in the last column, and the text beside it no longer shifts when the scrollbar appears or hides.
+
 ## 1.4.7 (2026-11-16)
 
 Persian in quotes is readable.
