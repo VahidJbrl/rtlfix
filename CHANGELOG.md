@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.10 (2026-11-18)
+
+Numbers stay with their units in Claude Code on Windows.
+
+- Claude Code on Windows sends Persian lines already reordered, and rtlfix works out the original order before drawing them. Where a number stood between Persian text and an English word, it sometimes picked the wrong side: `16 GB` came out as `GB 16`, and in a list item that starts with an English name, a number could jump next to the name. rtlfix now knows common units such as GB, GHz, ms, oz, lb, ml, PM and days, and keeps a number in front of them, as on Linux.
+
 ## 1.4.9 (2026-11-17)
 
 One cursor in Qwen Code's prompt.

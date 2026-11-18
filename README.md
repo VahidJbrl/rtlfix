@@ -67,7 +67,7 @@ npm install -g --prefix ~/.local github:VahidJbrl/rtlfix
 Without `git`, install the release archive instead:
 
 ```bash
-npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.4.9.tar.gz
+npm install -g https://github.com/VahidJbrl/rtlfix/archive/refs/tags/v1.4.10.tar.gz
 ```
 
 **Without npm**
@@ -140,7 +140,7 @@ screen   ◄──────  rtlfix  ◄────────────�
 
 Claude Code reorders right-to-left text by itself when it detects VS Code, but without joining letters or mirroring brackets, and that result cannot be reordered again reliably. So rtlfix starts Claude Code without the VS Code hint and turns the matching features back on with Claude Code's own documented settings: IDE auto-connect, synchronized output, strikethrough and hyperlinks. Settings you have chosen yourself always win.
 
-On Windows, Claude Code always reorders right-to-left text itself. There rtlfix leaves Claude Code's settings alone and turns each line back into reading order before drawing it. Claude Code uses the Unicode bidirectional algorithm without mirroring brackets, so rtlfix tries both directions, keeps the reading order that Claude Code would have drawn exactly as it did, and among those prefers the one with brackets, punctuation, percent signs and dates in their usual places. A table row is turned back as a whole, because Claude Code reorders it as one line.
+On Windows, Claude Code always reorders right-to-left text itself. There rtlfix leaves Claude Code's settings alone and turns each line back into reading order before drawing it. Claude Code uses the Unicode bidirectional algorithm without mirroring brackets, so rtlfix tries both directions, keeps the reading order that Claude Code would have drawn exactly as it did, and among those prefers the one with brackets, punctuation, percent signs, dates and units in their usual places. A table row is turned back as a whole, because Claude Code reorders it as one line.
 
 The bidirectional algorithm passes all 862,000 cases of Unicode's official conformance tests (`BidiTest.txt` and `BidiCharacterTest.txt`, Unicode 18.0), and the character widths match xterm.js exactly.
 

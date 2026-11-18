@@ -498,6 +498,22 @@ test('Claude Code on Windows: a number after an English name stays after it', ()
   assert.equal(t.row(1), ' '.repeat(58 - line.length) + line);
 });
 
+test('Claude Code on Windows: a number stays in front of the unit or English words it counts', () => {
+  const cases = [
+    ['حافظه 16 GB و دیسک 2.5 TB است', `${rev('است')} TB 2.5 ${rev('و دیسک')} GB 16 ${rev('حافظه')}`,
+      `${joined('است')} 2.5 TB ${joined('و دیسک')} 16 GB ${joined('حافظه')}`],
+    ['پس 5 PM را حد بگیر', `${rev('را حد بگیر')} PM 5 ${rev('پس')}`, `${joined('را حد بگیر')} 5 PM ${joined('پس')}`],
+    ['1. Notes: کتاب مثل 30 Days of Code است.', `1. Notes: 30 ${rev('کتاب مثل')} Days of Code ${rev('است')}.`,
+      `.${joined('است')} 30 Days of Code ${joined('کتاب مثل')} :Notes .1`],
+  ];
+  for (const [text, shown, line] of cases) {
+    const linux = screen(relayed([`${cup(1, 1)}  ${text}`], 60, 2), 60, 2);
+    const windows = screen(relayed([`${cup(1, 1)}  ${shown}`], 60, 2, { visual: true }), 60, 2);
+    assert.equal(linux.row(1), ' '.repeat(58 - line.length) + line);
+    assert.equal(windows.row(1), linux.row(1));
+  }
+});
+
 test('a leading underscore and the signs of C++ and C# stay with their words', () => {
   const t = screen(relayed([`${cup(1, 1)}از _old و C++ و C# استفاده کن`], 40, 2), 40, 2);
   const line = `${joined('استفاده کن')} C# ${joined('و')} C++ ${joined('و')} _old ${joined('از')}`;
