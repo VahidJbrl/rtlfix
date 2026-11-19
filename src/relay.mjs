@@ -411,7 +411,8 @@ export class Relay {
   input(buf) {
     if (!buf.includes(0x1b)) return buf;
     const row = this.scr[this.y];
-    const flip = Boolean(row && row.shown && row.dir === 1);
+    const seg = row && row.shown && row.segs ? row.segs.find((g) => this.x >= g.a && this.x < g.b) : null;
+    const flip = Boolean(row && row.shown && (seg ? seg.dir : row.dir) === 1);
     let typing = null;
     const column = (x, y) => {
       const r = y >= 0 && y < this.rows ? this.scr[y] : null;
@@ -1535,6 +1536,17 @@ export class Relay {
     return null;
   }
 
+  _boxed(y, r0, r1) {
+    for (const [step, left, right] of [[-1, '╭', '╮'], [1, '╰', '╯']]) {
+      for (let k = y + step; k >= 0 && k < this.rows && Math.abs(k - y) < 60; k += step) {
+        const ch = this.scr[k].ch;
+        if (ch[r0] === left && ch[r1 - 1] === right) return true;
+        if (!isColumnRule(ch[r0]) || !isColumnRule(ch[r1 - 1])) break;
+      }
+    }
+    return false;
+  }
+
   _table(row, y) {
     const cols = this.cols;
     const ch = row.ch;
@@ -1542,6 +1554,12 @@ export class Relay {
     while (r0 < cols && isSpace(ch[r0])) r0++;
     let r1 = cols;
     while (r1 > r0 && isSpace(ch[r1 - 1])) r1--;
+    if (r1 - r0 > 2 && isColumnRule(ch[r0]) && isColumnRule(ch[r1 - 1]) && this._boxed(y, r0, r1)) {
+      r0++;
+      r1--;
+      while (r0 < r1 && isSpace(ch[r0])) r0++;
+      while (r1 > r0 && isSpace(ch[r1 - 1])) r1--;
+    }
     if (r1 - r0 < 3 || !isColumnRule(ch[r0]) || !isColumnRule(ch[r1 - 1])) return null;
     if (strongEnds(ch, r0, r1)[0] < 0) return null;
     const grid = this._grid(y, r0, r1);
@@ -1593,7 +1611,8 @@ export class Relay {
       if (x > a) {
         const whole = a === 0 && (x === cols || (edge && x === cols - 1));
         const cell = !whole && above && above.segs ? above.segs.find((g) => g.a === a && g.b === x) : null;
-        layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : cell, whole ? below : null, cols, this.visual, this.markCells, src, this.drawn);
+        const inner = this.visual && !src && !whole && a > 0 && x < cols && this.scr[y] === row && this._boxed(y, a - 1, x + 1);
+        layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : cell, whole ? below : null, cols, this.visual, this.markCells, src, this.drawn, inner);
       }
       a = x + 1;
     }
@@ -1680,25 +1699,26 @@ function logicalLine(line) {
 
 const UNDONE = new Map();
 
-function undo(cps, p) {
-  const key = p + String.fromCodePoint(...cps);
+function undo(cps, p, hint = null) {
+  const key = p + (hint ? String.fromCodePoint(...hint) + '\n' : '') + String.fromCodePoint(...cps);
   let found = UNDONE.get(key);
   if (!found) {
     if (UNDONE.size > 4000) UNDONE.clear();
-    found = fromVisual(cps, p);
+    found = fromVisual(cps, p, hint);
     UNDONE.set(key, found);
   }
   return found;
 }
 
-function undoLine(cps, guess) {
-  const c = [undo(cps, 0), undo(cps, 1)];
+function undoLine(cps, guess, hint = null) {
+  const c = [undo(cps, 0, hint), undo(cps, 1, hint)];
   const ok = c.map((x) => x.ok);
   let level;
   if (ok[0] !== ok[1]) level = ok[1] ? 1 : 0;
+  else if (ok[0] && c[0].full !== c[1].full) level = c[0].full ? 0 : 1;
   else if (ok[0] && c[0].pen !== c[1].pen) level = c[0].pen < c[1].pen ? 0 : 1;
   else level = guess(c);
-  return { level, levels: c[level].levels, sure: ok[level] };
+  return { level, levels: c[level].levels, sure: ok[level], full: c[level].full };
 }
 
 function leadOf(ch, at, a, b, loose = false) {
@@ -1809,7 +1829,7 @@ function toLogical(ch, at, b0, cells, levels, cols) {
   return [nch, nat, org];
 }
 
-function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false, src = null, epoch = -2) {
+function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false, src = null, epoch = -2, inner = false) {
   const { cmap, vmap, lmap, lch } = maps;
   let ch = src ? src.ch : row.ch;
   let at = src ? src.at : row.at;
@@ -1830,27 +1850,51 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     if (whole && vb > v0) x0 = vj + 1;
     else if (whole && above && above.shown && above.x0 >= 0 && vb >= above.x0) x0 = above.x0;
     else if (whole && vb > 0 && below && startsAt(below, cols) === vb - 1) { x0 = vb - 1; near = true; }
-    const extra = vb > x0;
+    else if (inner && v0 > a + 1 && isSpace(ch[a])) x0 = a + 1;
+    let extra = vb > x0;
     const [first, last] = strongEnds(ch, vb, v1);
     let open = false;
     if (first >= 0) {
       let cells = cellsOf(ch, at, extra ? x0 : vb, v1, cols);
       const before = row.seen === epoch ? row.prior : row.shown ? row.lch : null;
-      const pick = undoLine(cpsOf(cells), (c) => {
-        if (whole && before) {
+      const hintAt = (start) => {
+        if (!before) return null;
+        const lead = [];
+        if (!whole) for (let x = a; x < start; x++) if (ch[x] !== '' && !isSpace(ch[x])) lead.push(ch[x]);
+        const h = [];
+        for (let x = whole ? start : a; x < b; x++) if (before[x] !== '' && (h.length || !isSpace(before[x]))) h.push(before[x]);
+        let k = 0;
+        for (const c of lead) {
+          while (k < h.length && isSpace(h[k])) k++;
+          if (h[k] !== c) return null;
+          k++;
+        }
+        while (k > 0 && k < h.length && isSpace(h[k])) k++;
+        let e = h.length;
+        while (e > k && isSpace(h[e - 1])) e--;
+        return k < e ? h.slice(k, e).map((c) => c.codePointAt(0)) : null;
+      };
+      const hint = hintAt(cells[0].x);
+      let pick = undoLine(cpsOf(cells), (c) => {
+        if (before) {
           const agree = (levels) => {
             let x = cells[0].x;
             let n = 0;
             for (const k of visualOrder(levels)) {
-              if (before[x] !== cells[k].ch) break;
+              if (whole) {
+                if (before[x] !== cells[k].ch) break;
+                x += cells[k].w;
+              } else {
+                if (n === 0 && isSpace(cells[k].ch)) continue;
+                if (!hint || n >= hint.length || hint[n] !== cells[k].ch.codePointAt(0)) break;
+              }
               n++;
-              x += cells[k].w;
             }
             return n;
           };
-          const a = agree(c[0].levels);
-          const b = agree(c[1].levels);
-          if (a !== b) return a > b ? 0 : 1;
+          const p0 = agree(c[0].levels);
+          const p1 = agree(c[1].levels);
+          if (p0 !== p1) return p0 > p1 ? 0 : 1;
         }
         if (whole && above && above.shown && above.soft && first === 0 && last === 1) return 1;
         if (labelEnd(ch, at, vb, v1, true) > 0) return 0;
@@ -1859,13 +1903,26 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
         const vote = edgeVote(ch, vb, 1) + edgeVote(ch, v1 - 1, -1);
         if (vote) return vote > 0 ? 1 : 0;
         return whole && below && continues(below, x0, cols) ? 0 : 1;
-      });
+      }, hint);
+      if (before && vb > v0 && !pick.full) {
+        let s = vj;
+        while (s > v0 && !isSpace(ch[s - 1])) s--;
+        while (s > v0 + 1 && isSpace(ch[s - 1]) && isSpace(ch[s - 2])) s--;
+        const alt = cellsOf(ch, at, s, v1, cols);
+        const other = undoLine(cpsOf(alt), () => (first === 1 || last === 1 ? 1 : 0), hintAt(s));
+        if (other.full) {
+          cells = alt;
+          pick = other;
+          x0 = s;
+          extra = false;
+        }
+      }
       level = pick.level;
       fixed = !pick.sure;
       let levels = pick.levels;
       if (level === 0 && extra) {
         cells = cellsOf(ch, at, vb, v1, cols);
-        levels = undo(cpsOf(cells), 0).levels;
+        levels = undo(cpsOf(cells), 0, hintAt(vb)).levels;
       }
       [ch, at, org] = toLogical(ch, at, cells[0].x, cells, levels, cols);
       [m0, j, b0] = leadOf(ch, at, a, b);

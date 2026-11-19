@@ -543,3 +543,65 @@ for (const visual of [false, true]) {
     assert.equal(screen(Buffer.concat([...out, r.tick()]), 30, 4).term.scr[0].at.filter((a) => a.st.v).length, 0);
   });
 }
+
+const searchFrames = (typed, visual) => {
+  const edge = (y, l, r) => `${cup(y, 3)}${l}${'─'.repeat(36)}${r}`;
+  return [edge(1, '╭', '╮') + edge(3, '╰', '╯'), ...typed.map(([fa, en]) => {
+    const text = `⌕ ${fa}${en ? ' ' + en : ''}`;
+    const shown = visual ? (en ? `${en} ${rev(`⌕ ${fa}`)}` : rev(text)) : text;
+    return frame(`${cup(2, 1)}${ESC}[2K  │ ${shown}${cup(2, 40)}│${cup(2, 5 + [...text].length)}`);
+  })];
+};
+
+test('Claude Code on Windows: a search box keeps Persian and English in typing order, with the cursor after the text', () => {
+  const typed = [['بازی', ''], ['بازی م', ''], ['بازی م', 'g'], ['بازی م', 'game'], ['بازی م', 'game 2']];
+  for (let n = 1; n <= typed.length; n++) {
+    const linux = screen(relayed(searchFrames(typed.slice(0, n), false), 44, 4), 44, 4);
+    const windows = screen(relayed(searchFrames(typed.slice(0, n), true), 44, 4, { visual: true }), 44, 4);
+    assert.equal(windows.row(2), linux.row(2));
+    assert.deepEqual(windows.cursor, linux.cursor);
+  }
+  const t = screen(relayed(searchFrames(typed, true), 44, 4, { visual: true }), 44, 4);
+  const line = `game 2 ${joined('م')} ${joined('بازی')} ⌕ │`;
+  const pad = 40 - 3 - line.length;
+  assert.equal(t.row(2), '  │' + ' '.repeat(pad) + line);
+  assert.deepEqual(t.cursor, [2, 3 + pad + 'game 2'.length + 1]);
+});
+
+test('the arrow keys swap in a search box that holds Persian text', () => {
+  for (const visual of [false, true]) {
+    const r = new Relay({ cols: 44, rows: 4, visual });
+    for (const f of searchFrames([['بازی', '']], visual)) r.push(Buffer.from(f));
+    r.tick();
+    assert.equal(sent(r, '\x1b[C\x1b[D'), '\x1b[D\x1b[C');
+  }
+});
+
+test('Claude Code on Windows: a table inside a rounded box keeps its columns', () => {
+  const top = '╭' + '─'.repeat(40) + '╮';
+  const bot = '╰' + '─'.repeat(40) + '╯';
+  const grid = (l, m, r) => `│ ${l}${'─'.repeat(10)}${m}${'─'.repeat(14)}${r}${' '.repeat(12)}│`;
+  const cells = '│ نام      │ توضیح        │';
+  const rows = (visual) => [top, grid('┌', '┬', '┐'), `│ ${visual ? rev(cells) : cells}${' '.repeat(12)}│`, grid('└', '┴', '┘'), bot];
+  const draw = (visual) => rows(visual).map((line, y) => `${cup(y + 1, 1)}${line}`).join('');
+  const linux = screen(relayed([draw(false)], 50, 6), 50, 6);
+  const windows = screen(relayed([draw(true)], 50, 6, { visual: true }), 50, 6);
+  assert.equal(linux.row(3), `│ │      ${joined('نام')} │        ${joined('توضیح')} │${' '.repeat(12)}│`);
+  assert.equal(windows.row(3), linux.row(3));
+});
+
+test('Claude Code on Windows: what is typed into the prompt keeps its order as it is typed', () => {
+  const runs = [
+    [['کتاب', rev('کتاب')], ['کتاب -', rev('کتاب -')], ['کتاب - ', rev('کتاب - ')], ['کتاب - خوب', rev('کتاب - خوب')]],
+    [['بازی', rev('بازی')], ['بازی 2', `2 ${rev('بازی')}`], ['بازی 2 g', `g 2 ${rev('بازی')}`], ['بازی 2 game', `game 2 ${rev('بازی')}`]],
+  ];
+  for (const steps of runs) {
+    for (let n = 1; n <= steps.length; n++) {
+      const typed = (visual) => steps.slice(0, n).map(([text, shown]) => frame(`${cup(2, 1)}${ESC}[2K❯ ${visual ? shown : text}${cup(2, 3 + [...text].length)}`));
+      const linux = screen(relayed(typed(false), 40, 3), 40, 3);
+      const windows = screen(relayed(typed(true), 40, 3, { visual: true }), 40, 3);
+      assert.equal(windows.row(2), linux.row(2), steps[n - 1][0]);
+      assert.deepEqual(windows.cursor, linux.cursor, steps[n - 1][0]);
+    }
+  }
+});

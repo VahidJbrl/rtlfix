@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.11 (2026-11-18)
+
+Search boxes and typing in Claude Code on Windows.
+
+- In Claude Code's search boxes on Windows, such as the one in `/resume`, rtlfix turned the whole box around like a table row. Persian text was drawn at the right edge while the cursor stayed at the left, away from it, and mixed Persian and English came out of order. rtlfix now turns back only the text inside the box, as Claude Code wrote it, so the text and the cursor sit where they do on Linux.
+- In a search box with Persian text, the left and right arrow keys now move the cursor the way it looks, as they already did in the prompt.
+- While you type on Windows, rtlfix uses what the line held a moment before to settle where each word belongs. A number or a hyphen typed after Persian words now stays where it was typed, in the prompt and in search boxes, and answers keep numbers in place more often while they stream in.
+
 ## 1.4.10 (2026-11-18)
 
 Numbers stay with their units in Claude Code on Windows.

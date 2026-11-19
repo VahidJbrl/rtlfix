@@ -664,7 +664,17 @@ function oddness(cps) {
   return pen;
 }
 
-function tryVisual(cps, t0, p, runs, flip, swappedFirst) {
+function agreement(text, hint) {
+  let i = 0;
+  while (i < text.length && GAPS.has(text[i])) i++;
+  let end = text.length;
+  while (end > i && GAPS.has(text[end - 1])) end--;
+  let n = 0;
+  while (i + n < text.length && n < hint.length && text[i + n] === hint[n]) n++;
+  return { n, full: n >= hint.length || i + n >= end };
+}
+
+function tryVisual(cps, t0, p, runs, flip, swappedFirst, hint) {
   const levels = visualTypes(t0, cps, p, runs, flip, swappedFirst);
   const order = visualOrder(levels);
   const text = order.map((k) => cps[k]);
@@ -677,12 +687,13 @@ function tryVisual(cps, t0, p, runs, flip, swappedFirst) {
   }
   let flips = swappedFirst === (p === 1) ? 0 : 1;
   for (const f of flip) flips += f;
-  return { levels, ok, pen: oddness(text), kept, flips, flip, swappedFirst };
+  const { n: agree, full } = hint ? agreement(text, hint) : { n: 0, full: false };
+  return { levels, ok, full, pen: oddness(text), agree, kept, flips, flip, swappedFirst };
 }
 
-const better = (a, b) => (a.ok !== b.ok ? a.ok : a.pen !== b.pen ? a.pen < b.pen : a.kept !== b.kept ? a.kept : a.flips < b.flips);
+const better = (a, b) => (a.ok !== b.ok ? a.ok : a.full !== b.full ? a.full : a.pen !== b.pen ? a.pen < b.pen : a.agree !== b.agree ? a.agree > b.agree : a.kept !== b.kept ? a.kept : a.flips < b.flips);
 
-export function fromVisual(cps, p) {
+export function fromVisual(cps, p, hint = null) {
   const t0 = classesOf(cps);
   for (let k = 0; k < t0.length; k++) {
     if (t0[k] === BN) t0[k] = ON;
@@ -694,13 +705,13 @@ export function fromVisual(cps, p) {
   const both = cps.some((cp) => BRACKET_TYPE.has(cp)) ? [p === 1, p !== 1] : [p === 1];
   let top = null;
   for (const swappedFirst of both) {
-    let cur = tryVisual(cps, t0, p, runs, runs.map(() => 0), swappedFirst);
+    let cur = tryVisual(cps, t0, p, runs, runs.map(() => 0), swappedFirst, hint);
     for (let round = 0; round <= 2 * open.length; round++) {
       let best = cur;
       for (const i of open) {
         const flip = cur.flip.slice();
         flip[i] ^= 1;
-        const next = tryVisual(cps, t0, p, runs, flip, swappedFirst);
+        const next = tryVisual(cps, t0, p, runs, flip, swappedFirst, hint);
         if (better(next, best)) best = next;
       }
       if (best === cur) break;
@@ -708,7 +719,7 @@ export function fromVisual(cps, p) {
     }
     if (!top || better(cur, top)) top = cur;
   }
-  return { levels: top.levels, ok: top.ok, pen: top.pen };
+  return { levels: top.levels, ok: top.ok, pen: top.pen, full: top.full };
 }
 
 const CODE = new Set([0x3d, 0x3b, 0x7b, 0x7d, 0x3c, 0x3e]);
