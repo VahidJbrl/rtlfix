@@ -187,6 +187,11 @@ class Row {
     }
     this.tlen = Math.min(this.tlen, cols);
     this.cmap = null;
+    this.vmap = null;
+    this.lmap = null;
+    this.lch = null;
+    this.segs = null;
+    this.prior = null;
   }
 }
 
@@ -822,7 +827,7 @@ export class Relay {
   _before(row) {
     if (row.seen === this.epoch) return;
     row.seen = this.epoch;
-    row.prior = row.shown && row.lch ? row.lch : row.ch.slice();
+    row.prior = row.shown ? row.lch : row.ch.slice();
   }
 
   _put(row, x, ch, w, iw = w) {
@@ -1498,9 +1503,13 @@ export class Relay {
     row.dirty = false;
     row.rtl = rowHasRtl(row);
     if (row.rtl) {
-      const s = this._drawRtl(row, y, above);
-      row.shown = true;
-      return s;
+      try {
+        const s = this._drawRtl(row, y, above);
+        row.shown = true;
+        return s;
+      } catch {
+        row.rtl = false;
+      }
     }
     row.shown = false;
     row.cmap = null;
@@ -1856,7 +1865,8 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     let open = false;
     if (first >= 0) {
       let cells = cellsOf(ch, at, extra ? x0 : vb, v1, cols);
-      const before = row.seen === epoch ? row.prior : row.shown ? row.lch : null;
+      const prev = row.seen === epoch ? row.prior : row.shown ? row.lch : null;
+      const before = prev && prev.length === cols ? prev : null;
       const hintAt = (start) => {
         if (!before) return null;
         const lead = [];

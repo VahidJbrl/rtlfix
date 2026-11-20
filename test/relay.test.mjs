@@ -605,3 +605,14 @@ test('Claude Code on Windows: what is typed into the prompt keeps its order as i
     }
   }
 });
+
+test('Claude Code on Windows: a line drawn again after the terminal gets wider is still turned around', () => {
+  const line = `${cup(1, 1)}● summary\u00a0· .${rev('سلام دنیا')}`;
+  const expected = `summary\u00a0· .${joined('سلام دنیا')} ●`;
+  const r = new Relay({ cols: 30, rows: 3, visual: true });
+  const out = [r.push(Buffer.from(line, 'utf8')), r.tick()];
+  r.resize(40, 3);
+  assert.equal(r.input(Buffer.from(`${ESC}[<0;36;1M`, 'latin1')).toString('latin1'), `${ESC}[<0;36;1M`);
+  out.push(r.push(Buffer.from(`${ESC}[2K${line}`, 'utf8')), r.tick());
+  assert.equal(screen(Buffer.concat(out), 40, 3).row(1), ' '.repeat(40 - expected.length) + expected);
+});

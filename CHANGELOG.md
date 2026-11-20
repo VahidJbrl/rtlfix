@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.12 (2026-11-20)
+
+Claude Code on Windows keeps working after the terminal is resized.
+
+- Since 1.4.11, making the terminal wider during a Claude Code session on Windows, for example by closing a side bar or enlarging the window, could make rtlfix stop for the rest of that session. Persian then came out exactly as Claude Code sends it: words in reverse order, letters apart, and list markers and labels such as `summary` on the wrong side. Lines are now drawn again at the new width.
+- After a resize, clicks and copied selections no longer use a line's layout from before the resize.
+- If a single line ever cannot be laid out, only that line is shown as the program sent it, and rtlfix keeps working for everything else.
+
 ## 1.4.11 (2026-11-18)
 
 Search boxes and typing in Claude Code on Windows.
