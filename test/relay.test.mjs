@@ -616,3 +616,36 @@ test('Claude Code on Windows: a line drawn again after the terminal gets wider i
   out.push(r.push(Buffer.from(`${ESC}[2K${line}`, 'utf8')), r.tick());
   assert.equal(screen(Buffer.concat(out), 40, 3).row(1), ' '.repeat(40 - expected.length) + expected);
 });
+
+test('an English item in a Persian list lines up with the Persian items around it', () => {
+  const linux = ['● جاهای دیدنی شهر:', '', '  1. موزه برای یک روز کافی است', '  2. Central Park:', '  3. Bryant Park (Midtown کنار)', '     - Ice skating'];
+  const windows = [`● ${rev('جاهای دیدنی شهر:')}`, '', `  1. ${rev('موزه برای یک روز کافی است')}`, '  2. Central Park:', `  3. Bryant Park (Midtown ${rev('کنار')})`, '     - Ice skating'];
+  const right = (s, indent) => ' '.repeat(50 - indent - s.length) + s;
+  for (const [lines, visual] of [[linux, false], [windows, true]]) {
+    const t = screen(relayed([lines.map((l, i) => cup(i + 1, 1) + l).join('')], 50, 7, { visual }), 50, 7);
+    assert.equal(t.row(1), right(`:${joined('جاهای دیدنی شهر')} ●`, 0));
+    assert.equal(t.row(3), right(`${joined('موزه برای یک روز کافی است')} .1`, 2));
+    assert.equal(t.row(4), right(':Central Park .2', 2));
+    assert.equal(t.row(5), right(`(${joined('کنار')} Midtown) Bryant Park .3`, 2));
+    assert.equal(t.row(6), right('Ice skating -', 5));
+  }
+});
+
+test('an English list and a long English sentence stay left to right', () => {
+  const lines = ['● جاهای دیدنی شهر:', '  - The museum is closed on Mondays, so plan a later day.', '', '  Sources:', '  - City Parks Guide'];
+  const t = screen(relayed([lines.map((l, i) => cup(i + 1, 1) + l).join('')], 60, 6), 60, 6);
+  assert.equal(t.row(2), lines[1]);
+  assert.equal(t.row(4), lines[3]);
+  assert.equal(t.row(5), lines[4]);
+});
+
+test('the wrapped English end of a right-to-left item stays with it, and a command on the next line does not', () => {
+  const linux = ['● جاهای دیدنی شهر:', '  - Central Park (کنار Fifth Avenue) is the largest', '    park in the city', '', '  این دستور را اجرا کنید:', '  npm test'];
+  const windows = [`● ${rev('جاهای دیدنی شهر:')}`, `  - Central Park (${rev('کنار')} Fifth Avenue) is the largest`, '    park in the city', '', `  ${rev('این دستور را اجرا کنید:')}`, '  npm test'];
+  for (const [lines, visual] of [[linux, false], [windows, true]]) {
+    const t = screen(relayed([lines.map((l, i) => cup(i + 1, 1) + l).join('')], 52, 7, { visual }), 52, 7);
+    assert.equal(t.row(2), ` is the largest (Fifth Avenue ${joined('کنار')}) Central Park -`);
+    assert.equal(t.row(3), ' '.repeat(32) + 'park in the city');
+    assert.equal(t.row(6), '  npm test');
+  }
+});

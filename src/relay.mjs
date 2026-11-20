@@ -149,6 +149,7 @@ class Row {
     this.ch = new Array(cols).fill(' ');
     this.at = new Array(cols).fill(attr);
     this.rtl = false;
+    this.ctx = 0;
     this.shown = false;
     this.dirty = false;
     this.dir = 0;
@@ -344,6 +345,11 @@ export class Relay {
     this.history = [];
     this.epoch = 0;
     this.drawn = -1;
+    this.moved = false;
+    this.memo = null;
+    this.box = null;
+    this.hold = 0;
+    this.known = new Map();
   }
 
   push(buf) {
@@ -462,6 +468,160 @@ export class Relay {
     return rows;
   }
 
+  _rowAt(k) {
+    if (k >= 0) return this.scr[k] || null;
+    if (this.scr !== this.main) return null;
+    return this.history[this.history.length - this.hold + k] || null;
+  }
+
+  _info(row) {
+    const ch = textOf(row);
+    if (!this.memo) return rowInfo(ch);
+    let info = this.memo.get(ch);
+    if (!info) {
+      info = rowInfo(ch);
+      this.memo.set(ch, info);
+    }
+    return info;
+  }
+
+  _textCol(k) {
+    const r = this._rowAt(k);
+    if (!r) return -1;
+    const q = this._info(r);
+    return q.kind === 'list' ? q.t : q.kind === 'text' ? q.c : -1;
+  }
+
+  _prompt() {
+    if (!this.box) {
+      const rows = this._typingRows();
+      this.box = rows.size > 1 ? rows : new Set();
+    }
+    return this.box;
+  }
+
+  _want(y) {
+    const row = this.scr[y];
+    const me = this._info(row);
+    let want = 0;
+    if (me.kind === 'list') want = this._listWant(y, me);
+    else if (me.kind === 'text' && !me.rtl && !me.head) want = this._wrapWant(y, me);
+    else if (me.kind === 'text' && !me.head) want = this._lost(y) ? -1 : 0;
+    if (want < 0) want = this.known.get(row.ch.join('')) || 0;
+    else if (want) this._remember(row);
+    return want && this._prompt().has(y) ? 0 : want;
+  }
+
+  _remember(row) {
+    if (this.known.size > 4000) this.known.clear();
+    this.known.set(row.ch.join(''), 1);
+  }
+
+  _para(k) {
+    const col = this._textCol(k);
+    const rows = [];
+    for (let i = k; i > k - 200; i--) {
+      const r = this._rowAt(i);
+      if (!r) break;
+      const q = this._info(r);
+      if (q.kind !== 'list' && q.kind !== 'text') break;
+      rows.push([r, q]);
+      if (q.kind === 'list' || q.head || this._textCol(i - 1) !== col) break;
+    }
+    if (!rows.length) return null;
+    const first = rows[rows.length - 1][0];
+    if (rowDir(first) !== 1) return null;
+    const st = { q: false };
+    const w = wordStats([], 0, st);
+    for (let i = rows.length - 1; i >= 0; i--) w.add(wordStats(textOf(rows[i][0]), rows[i][1].kind === 'list' ? rows[i][1].t : rows[i][1].c, st));
+    return { w, st, first };
+  }
+
+  _listWant(y, me) {
+    if (me.head) return 0;
+    let at = null;
+    let sib = null;
+    let blanks = 0;
+    let top = false;
+    for (let k = y - 1; k >= y - 400; k--) {
+      const r = this._rowAt(k);
+      if (!r) {
+        top = true;
+        break;
+      }
+      const q = this._info(r);
+      if (q.kind === 'blank') {
+        if (++blanks > 1) break;
+        continue;
+      }
+      blanks = 0;
+      if (q.kind === 'box') break;
+      if (q.lead) {
+        top = true;
+        break;
+      }
+      if (q.kind === 'list' && q.m === me.m) {
+        sib ??= k;
+        if (q.head) break;
+        continue;
+      }
+      if ((q.kind === 'list' ? q.m : q.c) > me.m) continue;
+      at = k;
+      break;
+    }
+    if ((at ?? sib) === null) {
+      if (!top) return 0;
+      if (!this._below(y, me)) return -1;
+    } else {
+      const p = this._para(at ?? sib);
+      if (!p || !(p.first.ctx || p.w.r > p.w.l)) return 0;
+    }
+    const w = wordStats(textOf(this.scr[y]), me.t);
+    for (let k = y + 1; k < this.rows && k <= y + 12; k++) {
+      const q = this._info(this.scr[k]);
+      if (q.kind !== 'text' || q.head || q.c !== me.t) break;
+      w.add(wordStats(textOf(this.scr[k]), q.c));
+    }
+    return w.fa || w.n <= 8 ? 1 : 0;
+  }
+
+  _lost(y) {
+    const a = this._rowAt(y - 1);
+    return !a || this._info(a).lead;
+  }
+
+  _below(y, me) {
+    let fa = 0;
+    let other = 0;
+    let blanks = 0;
+    for (let k = y; k < this.rows && k < y + 60; k++) {
+      const q = this._info(this.scr[k]);
+      if (q.kind === 'blank') {
+        if (++blanks > 1) break;
+        continue;
+      }
+      blanks = 0;
+      if (q.kind === 'box' || q.head) break;
+      const col = q.kind === 'list' ? q.m : q.c;
+      if (col < me.m || (col === me.m && q.kind !== 'list')) break;
+      const w = wordStats(textOf(this.scr[k]), q.kind === 'list' ? q.t : q.c);
+      if (w.fa) fa++;
+      else if (w.n) other++;
+    }
+    return fa > other;
+  }
+
+  _wrapWant(y, me) {
+    const a = this._rowAt(y - 1);
+    if (this._lost(y)) return -1;
+    if (!a.shown || a.dir !== 1 || this._textCol(y - 1) !== me.c) return 0;
+    if (this._info(a).end + 1 + me.word <= a.ch.length) return 0;
+    const p = this._para(y - 1);
+    if (!p) return 0;
+    const own = wordStats(textOf(this.scr[y]), me.c, p.st);
+    return p.first.ctx || p.w.r + own.r > p.w.l + own.l ? 1 : 0;
+  }
+
   resize(cols, rows) {
     if (!(cols > 0 && rows > 0) || (cols === this.cols && rows === this.rows)) return;
     const onAlt = this.scr !== this.main;
@@ -479,7 +639,7 @@ export class Relay {
       if (this.alt) for (const row of this.alt) row.resize(cols, true);
 
       if (reflow) {
-        for (const row of this.main) Object.assign(row, { rtl: false, shown: false, dirty: false, cmap: null, wrapped: false });
+        for (const row of this.main) Object.assign(row, { rtl: false, ctx: 0, shown: false, dirty: false, cmap: null, wrapped: false });
         this.history = [];
         this.sb = Infinity;
         if (onAlt) this.mainLost = true; else this.lost = true;
@@ -487,6 +647,7 @@ export class Relay {
     }
     this.cols = cols;
     this.rows = rows;
+    this.moved = true;
     growTabs(this.tabs, cols);
     if (this.mainTabs) growTabs(this.mainTabs, cols);
     for (const s of [this.saved.main, this.saved.alt]) if (s) s.x = Math.min(s.x, cols - 1);
@@ -825,6 +986,7 @@ export class Relay {
   }
 
   _before(row) {
+    this.moved = true;
     if (row.seen === this.epoch) return;
     row.seen = this.epoch;
     row.prior = row.shown ? row.lch : row.ch.slice();
@@ -872,6 +1034,7 @@ export class Relay {
       row.ch.fill(' ');
       row.at.fill(blank);
       row.rtl = false;
+      row.ctx = 0;
       row.shown = false;
       row.dirty = false;
       row.cmap = null;
@@ -916,25 +1079,32 @@ export class Relay {
       for (let k = 0; k < n; k++) {
         const row = this.scr[k];
         if (this.scr === this.main) {
-          if (this._needsDraw(row)) {
+          this.memo = new Map();
+          this.box = null;
+          if (this._needsDraw(row) || this._want(k) !== row.ctx) {
             this.inj += this._open() + this._drawRow(row, k, this.gone) + this._close() + this._goto(this.y, this.x) + (this.frame ? '' : '\x1b[?2026l');
             this.tw = false;
             this.desync = false;
           }
+          this.memo = null;
           this.gone = row;
           this._keep(row);
+          this.hold = k + 1;
           if (this.sb !== Infinity) this.sb++;
         }
         const sv = this.saved.main;
         if (sv && this.scr === this.main) sv.y -= 1;
       }
     }
+    this.hold = 0;
+    this.moved = true;
     this.scr.splice(top, n);
     for (let k = 0; k < n; k++) this.scr.splice(bot - n + 1 + k, 0, new Row(this.cols, blank, wrapped));
   }
 
   _scrollDown(top, bot, n, attr) {
     n = Math.min(n, bot - top + 1);
+    this.moved = true;
     this.scr.splice(bot - n + 1, n);
     for (let k = 0; k < n; k++) this.scr.splice(top, 0, new Row(this.cols, attr));
   }
@@ -1473,8 +1643,11 @@ export class Relay {
     const cur = scr[this.y];
     if (cur.shown && cur.cmapX !== this.x) { cur.dirty = true; this.dirty = true; }
     let body = '';
-    if (this.dirty) {
+    if (this.dirty || this.moved) {
       this.dirty = false;
+      this.moved = false;
+      this.memo = new Map();
+      this.box = null;
       const ty = this.ty;
       const open = this._open();
       if (this.visual) {
@@ -1482,9 +1655,10 @@ export class Relay {
       }
       for (let y = 0; y < this.rows; y++) {
         const row = scr[y];
-        if (!row.dirty) continue;
+        if (!row.dirty && this._want(y) === row.ctx) continue;
         body += this._drawRow(row, y, y > 0 ? scr[y - 1] : this.gone);
       }
+      this.memo = null;
       if (body) body = open + body + this._close();
       else { this.drawing = false; this.ty = ty; }
     }
@@ -1500,12 +1674,15 @@ export class Relay {
   }
 
   _drawRow(row, y, above) {
+    const ctx = this.scr[y] === row ? this._want(y) : 0;
     row.dirty = false;
-    row.rtl = rowHasRtl(row);
+    row.ctx = ctx;
+    row.rtl = ctx === 1 || rowHasRtl(row);
     if (row.rtl) {
       try {
         const s = this._drawRtl(row, y, above);
         row.shown = true;
+        if (row.dir === 1 && this.scr[y] === row) this._remember(row);
         return s;
       } catch {
         row.rtl = false;
@@ -1621,7 +1798,7 @@ export class Relay {
         const whole = a === 0 && (x === cols || (edge && x === cols - 1));
         const cell = !whole && above && above.segs ? above.segs.find((g) => g.a === a && g.b === x) : null;
         const inner = this.visual && !src && !whole && a > 0 && x < cols && this.scr[y] === row && this._boxed(y, a - 1, x + 1);
-        layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : cell, whole ? below : null, cols, this.visual, this.markCells, src, this.drawn, inner);
+        layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : cell, whole ? below : null, cols, this.visual, this.markCells, src, this.drawn, inner, whole ? row.ctx : 0);
       }
       a = x + 1;
     }
@@ -1655,6 +1832,98 @@ function rowHasRtl(row) {
     if (ch === '' || ch === ' ') continue;
     if (isRtlText(ch.codePointAt(0))) return true;
   }
+  return false;
+}
+
+const rowDir = (row) => (row.shown && row.dir === 1 ? 1 : 0);
+const textOf = (row) => (row.shown && !row.dirty && row.lch && row.lch.length === row.ch.length ? row.lch : row.ch);
+
+const LIST_MARK = /^(?:[-*+\u2022\u25e6\u25aa\u2023\u2043]|\d{1,4}[.)]|[a-z][.)]|[ivxl]{2,6}[.)])$/;
+const QUOTES = new Set([0x22, 0xab, 0xbb, 0x201c, 0x201d]);
+const ARABIC_SIGNS = new Set([0x60c, 0x61b, 0x61f]);
+const BULLETS = new Set(['\u25cf', '\u23fa', '\u2726']);
+const BLANK_ROW = { kind: 'blank' };
+const BOX_ROW = { kind: 'box' };
+
+function rowInfo(ch) {
+  const toks = [];
+  let cur = null;
+  let rtl = false;
+  let n = ch.length;
+  if (n > 2 && isEdge(ch[n - 1]) && isSpace(ch[n - 2])) n--;
+  for (let k = 0; k < n; k++) {
+    const c = ch[k];
+    if (c === '') {
+      if (cur) cur.e = k + 1;
+      continue;
+    }
+    if (isSpace(c)) {
+      cur = null;
+      continue;
+    }
+    if (isBox(c)) return BOX_ROW;
+    if (!rtl && isRtlText(c.codePointAt(0))) rtl = true;
+    if (!cur) {
+      cur = { x: k, e: k + 1, s: '' };
+      toks.push(cur);
+    }
+    cur.s += c;
+    cur.e = k + 1;
+  }
+  if (!toks.length) return BLANK_ROW;
+  const end = toks[toks.length - 1].e;
+  const p = toks.length > 1 && [...toks[0].s].length === 1 && isMarker(toks[0].s.codePointAt(0)) && !LIST_MARK.test(toks[0].s) ? 1 : 0;
+  const head = p === 1 && toks[0].x === 0;
+  const lead = head && !BULLETS.has(toks[0].s);
+  if (toks.length > p + 1 && LIST_MARK.test(toks[p].s)) return { kind: 'list', m: toks[p].x, t: toks[p + 1].x, head, lead, rtl, end };
+  return { kind: 'text', c: toks[p].x, word: toks[p].e - toks[p].x, head, lead, rtl, end };
+}
+
+function wordStats(ch, from, st = { q: false }) {
+  const w = {
+    n: 0,
+    r: 0,
+    l: 0,
+    fa: false,
+    add(o) {
+      this.n += o.n;
+      this.r += o.r;
+      this.l += o.l;
+      this.fa = this.fa || o.fa;
+    },
+  };
+  let any = false;
+  let rtl = false;
+  let ltr = false;
+  for (let k = Math.max(0, from); k <= ch.length; k++) {
+    const c = k < ch.length ? ch[k] : ' ';
+    if (c === '') continue;
+    if (isSpace(c)) {
+      if (any) w.n++;
+      if (rtl) w.r++;
+      else if (ltr) w.l++;
+      any = rtl = ltr = false;
+      continue;
+    }
+    for (const u of c) {
+      const cp = u.codePointAt(0);
+      if (QUOTES.has(cp)) {
+        st.q = cp === 0x22 ? !st.q : cp === 0xab || cp === 0x201c;
+        continue;
+      }
+      const t = bidiClass(cp);
+      if (t === L || t === R || t === AL) any = true;
+      if (ARABIC_SIGNS.has(cp) || isRtlText(cp)) w.fa = true;
+      if (st.q) continue;
+      if (isRtlText(cp)) rtl = true;
+      else if (t === L) ltr = true;
+    }
+  }
+  return w;
+}
+
+function hasRtlText(ch, a, b) {
+  for (let x = a; x < b; x++) if (ch[x] !== '' && isRtlText(ch[x].codePointAt(0))) return true;
   return false;
 }
 
@@ -1838,7 +2107,7 @@ function toLogical(ch, at, b0, cells, levels, cols) {
   return [nch, nat, org];
 }
 
-function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false, src = null, epoch = -2, inner = false) {
+function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false, src = null, epoch = -2, inner = false, ctx = 0) {
   const { cmap, vmap, lmap, lch } = maps;
   let ch = src ? src.ch : row.ch;
   let at = src ? src.at : row.at;
@@ -1863,7 +2132,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     let extra = vb > x0;
     const [first, last] = strongEnds(ch, vb, v1);
     let open = false;
-    if (first >= 0) {
+    if (first >= 0 && (!ctx || hasRtlText(ch, vb, v1))) {
       let cells = cellsOf(ch, at, extra ? x0 : vb, v1, cols);
       const prev = row.seen === epoch ? row.prior : row.shown ? row.lch : null;
       const before = prev && prev.length === cols ? prev : null;
@@ -1953,7 +2222,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     if (!rtl && isRtlText(cp)) rtl = true;
     for (const c of ch[x]) probe.push(c.codePointAt(0));
   }
-  if (!rtl) return;
+  if (!rtl && !ctx) return;
   let pl = paragraphLevel(probe);
   if (fixed && level >= 0) pl = level;
   const text = pl === 0 && !fixed ? labelEnd(ch, at, b0, b1) : -1;
@@ -1964,6 +2233,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
   }
   if (pl === 0 && !fixed && above && above.dir === 1 && (!whole || (above.shown && above.b0 === b0))) pl = 1;
   if (pl === 0 && !fixed && leansRtl(probe)) pl = 1;
+  if (pl === 0 && !fixed && ctx) pl = 1;
   if (whole) { row.dir = pl; row.b0 = b0; }
   else maps.segs.push({ a, b, dir: pl });
 

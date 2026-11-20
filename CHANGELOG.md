@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.13 (2026-11-20)
+
+English items in a Persian list line up with the rest of the list.
+
+- In a Persian answer, a list item written in English or mostly in English, such as `Central Park:` or a name followed by a few Persian words, was drawn left to right with its number or bullet on the left, out of line with the Persian items around it. rtlfix now gives such an item the direction of its list: when the line that introduces the list, or the item it sits under, is Persian, the item is drawn right to left with its marker on the right. This works the same on Linux, macOS and Windows.
+- English stays English: lists under an English heading such as `Sources:`, long English sentences inside a Persian list, and English answers keep their direction.
+- The part of a right-to-left item or paragraph that wraps onto the next row stays right to left, even when that row holds only English words. A command or other text on its own line after a Persian sentence still starts at the left.
+- In Claude Code's fullscreen mode, items keep their direction when the top of their list scrolls out of view, also under the prompt that Claude Code pins to the top while you scroll.
+
 ## 1.4.12 (2026-11-20)
 
 Claude Code on Windows keeps working after the terminal is resized.
