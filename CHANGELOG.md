@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.15 (2026-11-21)
+
+The choices in Claude Code's questions stay in place.
+
+- In a question asked in Persian, a choice written only in English, such as a place name, stayed on the left while the other choices were on the right. Every choice now takes the direction of the question, the field for your own answer too, so that line no longer moves when you start typing in it.
+- A choice that mixes English and Persian no longer jumps to the left when you point at it with the mouse. Claude Code colors the line under the pointer, and rtlfix now looks past that color.
+- A click in the empty part of a right-to-left line, past the end of its text, puts the cursor at the end of the text. Before, it landed one letter short, for example when you clicked at the end of the prompt to go on typing.
+- When you type English into a field drawn right to left, the cursor stays after the last letter on Windows too, and the left and right arrow keys move through the English text in their usual direction.
+
 ## 1.4.14 (2026-11-21)
 
 Claude Code's questions with choices look right while you choose and type.

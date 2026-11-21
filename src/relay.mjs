@@ -423,7 +423,7 @@ export class Relay {
     if (!buf.includes(0x1b)) return buf;
     const row = this.scr[this.y];
     const seg = row && row.shown && row.segs ? row.segs.find((g) => this.x >= g.a && this.x < g.b) : null;
-    const flip = Boolean(row && row.shown && (seg ? seg.dir : row.dir) === 1 && (seg || this.x >= row.b0));
+    const flip = Boolean(row && row.shown && (seg ? seg.dir : row.dir) === 1 && (seg || (this.x >= row.b0 && rowHasRtl(row))));
     let typing = null;
     const column = (x, y) => {
       const r = y >= 0 && y < this.rows ? this.scr[y] : null;
@@ -495,7 +495,7 @@ export class Relay {
   _prompt() {
     if (!this.box) {
       const rows = this._typingRows();
-      this.box = rows.size > 1 ? rows : new Set();
+      this.box = rows.size > 1 && this._typed(rows) ? rows : new Set();
     }
     return this.box;
   }
@@ -510,6 +510,15 @@ export class Relay {
     if (want < 0) want = this.known.get(row.ch.join('')) || 0;
     else if (want) this._remember(row);
     return want && this._prompt().has(y) ? 0 : want;
+  }
+
+  _typed(rows) {
+    for (const k of [...rows].sort((a, b) => a - b)) {
+      const r = this.scr[k];
+      if (this._info(r).kind === 'blank') continue;
+      return r.ch[0] !== '' && isMarker(r.ch[0].codePointAt(0)) && isSpace(r.ch[1]) && !chipBar(r.ch, r.at, this.cols, this.visual);
+    }
+    return false;
   }
 
   _remember(row) {
@@ -1875,7 +1884,8 @@ function rowInfo(ch) {
   if (!toks.length) return BLANK_ROW;
   const end = toks[toks.length - 1].e;
   const p = toks.length > 1 && [...toks[0].s].length === 1 && isMarker(toks[0].s.codePointAt(0)) && !LIST_MARK.test(toks[0].s) ? 1 : 0;
-  const head = p === 1 && toks[0].x === 0;
+  const pointed = p === 1 && toks.length > 2 && LIST_MARK.test(toks[1].s) && !BULLETS.has(toks[0].s);
+  const head = p === 1 && toks[0].x === 0 && !pointed;
   const lead = head && !BULLETS.has(toks[0].s);
   if (toks.length > p + 1 && LIST_MARK.test(toks[p].s)) return { kind: 'list', m: toks[p].x, t: toks[p + 1].x, head, lead, rtl, end };
   return { kind: 'text', c: toks[p].x, word: toks[p].e - toks[p].x, head, lead, rtl, end };
@@ -2044,9 +2054,9 @@ function undoLine(cps, guess, hint = null) {
   return { level, levels: c[level].levels, sure: ok[level], full: c[level].full };
 }
 
-function leadOf(ch, at, a, b, loose = false) {
+function leadOf(ch, at, a, b, loose = false, fill = null) {
   const base = (x) => (ch[x] === '' ? 0x20 : ch[x].codePointAt(0));
-  const blank = (x) => (loose ? isSpace(ch[x]) : blankCell(ch[x], at[x]));
+  const blank = (x) => (loose ? isSpace(ch[x]) : blankCell(ch[x], at[x]) || (at[x] === fill && isSpace(ch[x])));
   const markerEnd = (k) => {
     if (ch[k] === '[') {
       let c = k + 1;
@@ -2087,6 +2097,13 @@ function labelEnd(ch, at, x, b, loose = false) {
   k++;
   while (k < b && (loose ? isSpace(ch[k]) : blankCell(ch[k], at[k]))) k++;
   return k < b ? k : -1;
+}
+
+function highlightOf(ch, at, a, b) {
+  let x = b - 1;
+  while (x >= a && blankCell(ch[x], at[x])) x--;
+  if (x < a || !isSpace(ch[x]) || !at[x].st.bg || at[x].st.v) return null;
+  return at[x];
 }
 
 function startsAt(row, cols) {
@@ -2161,7 +2178,8 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
   let fixed = false;
   let level = -1;
   const base = (x) => (ch[x] === '' ? 0x20 : ch[x].codePointAt(0));
-  let [m0, j, b0] = leadOf(ch, at, a, b);
+  const lit = highlightOf(ch, at, a, b);
+  let [m0, j, b0] = leadOf(ch, at, a, b, false, lit);
   let b1 = b;
   while (b1 > b0 && blankCell(ch[b1 - 1], at[b1 - 1])) b1--;
   const e1 = b1;
@@ -2250,7 +2268,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
         levels = undo(cpsOf(cells), 0, hintAt(vb)).levels;
       }
       [ch, at, org] = toLogical(ch, at, cells[0].x, cells, levels, cols);
-      [m0, j, b0] = leadOf(ch, at, a, b);
+      [m0, j, b0] = leadOf(ch, at, a, b, false, lit);
       b1 = b;
       while (b1 > b0 && blankCell(ch[b1 - 1], at[b1 - 1])) b1--;
     }
@@ -2372,7 +2390,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
   if (hi >= 0) {
     for (let x = from; x < b; x++) {
       if (x < lo) {
-        vmap[x] = vmap[lo];
+        vmap[x] = pl === 1 && !org ? Math.min(b1, cols - 1) : vmap[lo];
         if (pl === 1) lmap[x] = cols;
       } else if (x > hi && pl === 1) {
         vmap[x] = vmap[hi];
@@ -2395,7 +2413,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     cmap[x] = Math.max(0, Math.min(cols - 1, c));
   }
 
-  if (!visual && cursorX >= from && cursorX < b1) {
+  if (cursorX >= from && cursorX < b1) {
     let kc = 0;
     while (kc < units.length && units[kc].x < cursorX) kc++;
     const u = units[kc];

@@ -369,7 +369,7 @@ test('a mouse event on a right-to-left line points at the character drawn there'
   r.tick();
   assert.equal(sent(r, '\x1b[<0;30;1M'), '\x1b[<0;1;1M');
   assert.equal(sent(r, '\x1b[<0;28;1M\x1b[<0;28;1m'), '\x1b[<0;4;1M\x1b[<0;4;1m');
-  assert.equal(sent(r, '\x1b[<0;6;1M'), '\x1b[<0;4;1M');
+  assert.equal(sent(r, '\x1b[<0;6;1M'), '\x1b[<0;5;1M');
   assert.equal(sent(r, '\x1b[<0;3;2M'), '\x1b[<0;3;2M');
   assert.equal(sent(r, `\x1b[M ${String.fromCharCode(32 + 30)}!`), `\x1b[M ${String.fromCharCode(32 + 1)}!`);
 });
@@ -708,4 +708,48 @@ test('the arrow keys keep their meaning on a list of choices and swap inside typ
     r.tick();
     assert.equal(sent(r, '\x1b[C\x1b[D'), '\x1b[D\x1b[C');
   }
+});
+
+const question = (focus, visual, hover = 0) => {
+  const fa = (s) => (visual ? rev(s) : s);
+  const rule = '─'.repeat(50);
+  const item = (n, label) => {
+    const line = `${focus === n ? '❯' : ' '} ${n}. ${label}`;
+    return hover === n ? `${ESC}[48;5;238m${line}${' '.repeat(36 - [...line].length)}${ESC}[49m` : line;
+  };
+  const rows = [rule, `←  ☐ ${fa('عصر')}  ☐ ${fa('شام')}  ✔ Submit  →`, '', fa('شنبه کدوم برنامه؟'), '', item(1, fa('قایق سواری')), `     ${fa('یک ساعت روی آب.')}`, item(2, 'Science Center'), `     ${fa('موزه علوم.')}`, item(3, 'Type something.'), rule, '  4. Chat about this'];
+  return frame(rows.map((l, i) => `${cup(i + 1, 1)}${ESC}[2K${l}`).join('') + cup(focus * 2 + 4, 1));
+};
+
+test('an English choice in a Persian question lines up with the other choices, also under the mouse pointer', () => {
+  const right = (s, indent) => ' '.repeat(50 - indent - s.length) + s;
+  for (const visual of [false, true]) {
+    for (const [focus, hover] of [[1, 0], [2, 0], [1, 2]]) {
+      const t = screen(relayed([question(focus, visual, hover)], 50, 13, { visual }), 50, 13);
+      assert.equal(t.row(8), right(`Science Center .2${focus === 2 ? ' ❮' : ''}`, focus === 2 ? 0 : 2), `${visual} ${focus} ${hover}`);
+      assert.equal(t.row(6), right(`${joined('قایق سواری')} .1${focus === 1 ? ' ❮' : ''}`, focus === 1 ? 0 : 2));
+      assert.equal(t.row(10), right('.Type something .3', 2));
+      assert.equal(t.row(12), '  4. Chat about this');
+    }
+  }
+});
+
+test('the arrow keys swap only where the line holds right-to-left text', () => {
+  for (const visual of [false, true]) {
+    const r = new Relay({ cols: 50, rows: 13, visual });
+    r.push(Buffer.from(question(3, visual)));
+    r.push(Buffer.from(frame(`${cup(10, 1)}${ESC}[2K❯ 3. Gatorland park${cup(10, 20)}`)));
+    r.tick();
+    assert.equal(sent(r, '\x1b[D'), '\x1b[D');
+    r.push(Buffer.from(frame(`${cup(10, 1)}${ESC}[2K❯ 3. ${visual ? rev('یک جدول') : 'یک جدول'}${cup(10, 13)}`)));
+    r.tick();
+    assert.equal(sent(r, '\x1b[D'), '\x1b[C');
+  }
+});
+
+test('a list typed into the prompt keeps the direction of each line', () => {
+  const rule = '─'.repeat(40);
+  const lines = [rule, '❯ 1. سلام دنیا', '  2. hello world', rule];
+  const t = screen(relayed([lines.map((l, i) => cup(i + 1, 1) + l).join('') + cup(3, 17)], 40, 5), 40, 5);
+  assert.equal(t.row(3), '  2. hello world');
 });
