@@ -423,7 +423,7 @@ export class Relay {
     if (!buf.includes(0x1b)) return buf;
     const row = this.scr[this.y];
     const seg = row && row.shown && row.segs ? row.segs.find((g) => this.x >= g.a && this.x < g.b) : null;
-    const flip = Boolean(row && row.shown && (seg ? seg.dir : row.dir) === 1);
+    const flip = Boolean(row && row.shown && (seg ? seg.dir : row.dir) === 1 && (seg || this.x >= row.b0));
     let typing = null;
     const column = (x, y) => {
       const r = y >= 0 && y < this.rows ? this.scr[y] : null;
@@ -1770,7 +1770,8 @@ export class Relay {
 
   _drawRtl(row, y, above) {
     const cols = this.cols;
-    const src = this.visual && this.scr[y] === row ? this._table(row, y) : null;
+    const bar = chipBar(row.ch, row.at, cols, this.visual);
+    const src = bar && this.visual ? chipSource(row.ch, row.at, cols, bar) : this.visual && this.scr[y] === row ? this._table(row, y) : null;
     const lay = src || row;
     const dch = lay.ch.slice();
     const dat = lay.at.slice();
@@ -1791,8 +1792,9 @@ export class Relay {
     row.x0 = -1;
     row.dep = false;
     row.soft = false;
-    const edge = !src && cols > 2 && isEdge(lay.ch[cols - 1]) && blankCell(lay.ch[cols - 2], lay.at[cols - 2]);
-    for (let x = 0; x <= cols; x++) {
+    const edge = !src && !bar && cols > 2 && isEdge(lay.ch[cols - 1]) && blankCell(lay.ch[cols - 2], lay.at[cols - 2]);
+    if (bar) for (const c of bar) layoutSegment(row, c.a, c.b, false, dch, dat, maps, cursorX, null, null, cols, this.visual, this.markCells, src, this.drawn, false, 0, true);
+    else for (let x = 0; x <= cols; x++) {
       if (x < cols && !isColumnRule(lay.ch[x]) && !(edge && x === cols - 1)) continue;
       if (x > a) {
         const whole = a === 0 && (x === cols || (edge && x === cols - 1));
@@ -1922,6 +1924,49 @@ function wordStats(ch, from, st = { q: false }) {
   return w;
 }
 
+function chipBar(ch, at, cols, visual) {
+  const gap = (x) => x >= cols || isSpace(ch[x]);
+  const mark = (x) => ch[x] !== '' && isMarker(ch[x].codePointAt(0));
+  const chips = [];
+  let x = 0;
+  while (x < cols) {
+    if (gap(x)) { x++; continue; }
+    const a = x;
+    if (!visual && !mark(a)) return null;
+    while (!gap(x) || !gap(x + 1)) if (++x - a > 32) return null;
+    let p = -1;
+    if (x - a === 1 && mark(a)) p = 0;
+    else if (x - a > 2 && mark(a) && isSpace(ch[a + 1])) p = 0;
+    else if (visual && x - a > 2 && mark(x - 1) && isSpace(ch[x - 2])) p = 1;
+    if (p < 0) return null;
+    chips.push({ a, b: x, p });
+  }
+  if (chips.length < 3) return null;
+  for (const c of chips) for (let k = c.a; k < c.b; k++) if (isBox(ch[k]) || isEdge(ch[k])) return null;
+  return chips;
+}
+
+function chipSource(ch, at, cols, chips) {
+  const nch = ch.slice();
+  const nat = at.slice();
+  const org = new Int16Array(cols);
+  for (let k = 0; k < cols; k++) org[k] = k;
+  for (const c of chips) {
+    if (!hasRtlText(ch, c.a, c.b)) continue;
+    const cells = cellsOf(ch, at, c.a, c.b, cols);
+    let x = c.a;
+    for (const k of visualOrder(undo(cpsOf(cells), c.p).levels)) {
+      const cell = cells[k];
+      nch[x] = cell.ch;
+      nat[x] = cell.at;
+      org[x] = cell.x;
+      if (cell.w === 2) { nch[x + 1] = ''; nat[x + 1] = cell.at; org[x + 1] = cell.x + 1; }
+      x += cell.w;
+    }
+  }
+  return { ch: nch, at: nat, org };
+}
+
 function hasRtlText(ch, a, b) {
   for (let x = a; x < b; x++) if (ch[x] !== '' && isRtlText(ch[x].codePointAt(0))) return true;
   return false;
@@ -2024,8 +2069,9 @@ function leadOf(ch, at, a, b, loose = false) {
   if (j > m0 && j < b && blank(j)) {
     b0 = j;
     while (b0 < b && blank(b0)) b0++;
-    const k = markerEnd(b0);
-    if (k > b0 && k < b && blank(k)) {
+    for (let n = 0; n < 2; n++) {
+      const k = markerEnd(b0);
+      if (k <= b0 || k >= b || !blank(k) || (n && ch[b0] !== '[')) break;
       j = k;
       b0 = k;
       while (b0 < b && blank(b0)) b0++;
@@ -2107,7 +2153,7 @@ function toLogical(ch, at, b0, cells, levels, cols) {
   return [nch, nat, org];
 }
 
-function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false, src = null, epoch = -2, inner = false, ctx = 0) {
+function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false, src = null, epoch = -2, inner = false, ctx = 0, tight = false) {
   const { cmap, vmap, lmap, lch } = maps;
   let ch = src ? src.ch : row.ch;
   let at = src ? src.at : row.at;
@@ -2278,6 +2324,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
       continue;
     }
     if (isFormatChar(s) || cpWidth(s) === 0) continue;
+    if (s === 0xfffd && k > 0 && k + 1 < units.length && isArabic(units[k - 1].cp) && isArabic(units[k + 1].cp)) { glyph[k] = ' '; continue; }
     glyph[k] = String.fromCodePoint(levels[k] & 1 ? mirrorOf(s) : s) + tail;
   }
 
@@ -2288,7 +2335,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     width += units[k].w;
     if (markCells) marks += [...glyph[k]].length - 1;
   }
-  const limit = whole ? (b < cols && m0 === a ? b - 1 : cols - 1) : b - 2;
+  const limit = whole ? (b < cols && m0 === a ? b - 1 : cols - 1) : b - (tight ? 1 : 2);
   if (pl === 1 && marks && limit - width - marks + 1 < from) {
     for (let k = 0; k < units.length; k++) if (glyph[k] !== null) glyph[k] = [...glyph[k]][0];
     marks = 0;

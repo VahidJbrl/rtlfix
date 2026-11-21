@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.14 (2026-11-21)
+
+Claude Code's questions with choices look right while you choose and type.
+
+- On Windows, the checkbox of the highlighted choice, and of the answer you type yourself, was drawn reversed at the far end of the line and moved along with the cursor as you typed, and an English word typed among Persian words, such as `csv` or `API`, landed in the wrong place. The checkbox now stays next to the number, and what you type keeps its order, also when you type in the middle of the text.
+- A choice that mixes English and Persian no longer changes sides as the highlight moves on and off it.
+- The left and right arrow keys switch to the next and previous question as expected. While a Persian choice was highlighted they worked the other way round. Inside text you type they still follow the line's direction.
+- The question tabs at the top keep their order, each checkbox beside its label, the same on Linux, macOS and Windows. Claude Code sends the replacement character U+FFFD in place of a half-space in a tab label; rtlfix shows it as a space.
+
 ## 1.4.13 (2026-11-20)
 
 English items in a Persian list line up with the rest of the list.

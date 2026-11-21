@@ -649,3 +649,63 @@ test('the wrapped English end of a right-to-left item stays with it, and a comma
     assert.equal(t.row(6), '  npm test');
   }
 });
+
+const choices = (focus, visual) => {
+  const label = (fa, en) => (visual ? (en ? `${en} ${rev(fa)}` : rev(fa)) : en ? `${en} ${fa}` : fa);
+  const rows = [
+    `${focus === 1 ? '❯' : ' '} 1. [ ] ${label('سیب و گلابی')}`,
+    `         ${label('از باغ نزدیک شهر.')}`,
+    `${focus === 2 ? '❯' : ' '} 2. [ ] ${visual ? `Blue Berry ${rev('تازه')}` : 'Blue Berry تازه'}`,
+    `         ${label('برای صبحانه.')}`,
+  ];
+  return frame(rows.map((l, i) => `${cup(i + 1, 1)}${ESC}[2K${l}`).join('') + cup(focus === 1 ? 1 : 3, 1));
+};
+
+test('a checkbox in a list of choices stays next to its number while the pointer moves', () => {
+  const right = (s, indent) => ' '.repeat(50 - indent - s.length) + s;
+  for (const visual of [false, true]) {
+    const r = new Relay({ cols: 50, rows: 5, visual });
+    const first = Buffer.concat([r.push(Buffer.from(choices(1, visual))), r.tick()]);
+    let t = screen(first, 50, 5);
+    assert.equal(t.row(1), right(`${joined('سیب و گلابی')} [ ] .1 ❮`, 0));
+    assert.equal(t.row(3), right(`${joined('تازه')} Blue Berry [ ] .2`, 2));
+    t = screen(Buffer.concat([first, r.push(Buffer.from(choices(2, visual))), r.tick()]), 50, 5);
+    assert.equal(t.row(1), right(`${joined('سیب و گلابی')} [ ] .1`, 2));
+    assert.equal(t.row(3), right(`${joined('تازه')} Blue Berry [ ] .2 ❮`, 0));
+  }
+});
+
+test('Claude Code on Windows: what is typed as an answer of your own keeps its order and its checkbox', () => {
+  const steps = [['یک جدول ', ` ${rev('یک جدول')}`], ['یک جدول csv', `csv ${rev('یک جدول')}`], ['یک جدول csv کوچک', `${rev('کوچک')} csv ${rev('یک جدول')}`]];
+  for (let n = 1; n <= steps.length; n++) {
+    const typed = (visual) => steps.slice(0, n).map(([text, shown]) => frame(`${cup(2, 1)}${ESC}[2K❯ 3. [✔] ${visual ? `${ESC}[7m ${ESC}[27m${shown}` : `${text}${ESC}[7m ${ESC}[27m`}${cup(2, 10 + [...text].length)}`));
+    const linux = screen(relayed(typed(false), 50, 3), 50, 3);
+    const windows = screen(relayed(typed(true), 50, 3, { visual: true }), 50, 3);
+    assert.ok(linux.row(2).endsWith(' [✔] .3 ❮'), linux.row(2));
+    assert.equal(windows.row(2).trim().replace(/ +/g, ' '), linux.row(2).trim().replace(/ +/g, ' '), steps[n - 1][0]);
+  }
+  const linux = screen(relayed(steps.map(([text]) => frame(`${cup(2, 1)}${ESC}[2K❯ 3. [✔] ${text}${cup(2, 10 + [...text].length)}`)), 50, 3), 50, 3);
+  assert.ok(linux.row(2).endsWith(`${joined('کوچک')} csv ${joined('یک جدول')} [✔] .3 ❮`), linux.row(2));
+});
+
+test('the tabs above a question keep their order, each label with its checkbox', () => {
+  const linux = `←  ${ESC}[48;5;153m ☐ میوه ${ESC}[49m ☐ رنگ  ☐ سه\ufffdشنبه  ✔ Submit  →`;
+  const windows = `←  ${ESC}[48;5;153m ${rev('☐ میوه')} ${ESC}[49m ${rev('☐ رنگ')}  ${rev('☐ سه\ufffdشنبه')}  ✔ Submit  →`;
+  const expected = `←   ${joined('میوه')} ☐  ${joined('رنگ')} ☐  ${joined('شنبه')} ${joined('سه')} ☐  ✔ Submit  →`;
+  for (const [line, visual] of [[linux, false], [windows, true]]) {
+    const t = screen(relayed([`${cup(1, 1)}${line}`], 60, 3, { visual }), 60, 3);
+    assert.equal(t.row(1), expected);
+  }
+});
+
+test('the arrow keys keep their meaning on a list of choices and swap inside typed Persian text', () => {
+  for (const visual of [false, true]) {
+    const r = new Relay({ cols: 50, rows: 5, visual });
+    r.push(Buffer.from(choices(1, visual)));
+    r.tick();
+    assert.equal(sent(r, '\x1b[C\x1b[D'), '\x1b[C\x1b[D');
+    r.push(Buffer.from(frame(`${cup(5, 1)}${ESC}[2K❯ 3. [✔] ${visual ? rev('یک جدول') : 'یک جدول'}${cup(5, 17)}`)));
+    r.tick();
+    assert.equal(sent(r, '\x1b[C\x1b[D'), '\x1b[D\x1b[C');
+  }
+});
