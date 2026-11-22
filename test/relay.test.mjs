@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Relay, logicalText } from '../src/relay.mjs';
 import { preShapeArabic } from '../src/shaping.mjs';
+import { resolveLevels, visualOrder, paragraphLevel } from '../src/bidi.mjs';
 
 const ESC = '\x1b';
 const cup = (y, x) => `${ESC}[${y};${x}H`;
@@ -655,7 +656,7 @@ const choices = (focus, visual) => {
   const rows = [
     `${focus === 1 ? '❯' : ' '} 1. [ ] ${label('سیب و گلابی')}`,
     `         ${label('از باغ نزدیک شهر.')}`,
-    `${focus === 2 ? '❯' : ' '} 2. [ ] ${visual ? `Blue Berry ${rev('تازه')}` : 'Blue Berry تازه'}`,
+    `${focus === 2 ? '❯' : ' '} 2. [ ] ${visual ? `Blue Berry ${rev('توت تازه')}` : 'توت تازه Blue Berry'}`,
     `         ${label('برای صبحانه.')}`,
   ];
   return frame(rows.map((l, i) => `${cup(i + 1, 1)}${ESC}[2K${l}`).join('') + cup(focus === 1 ? 1 : 3, 1));
@@ -668,10 +669,10 @@ test('a checkbox in a list of choices stays next to its number while the pointer
     const first = Buffer.concat([r.push(Buffer.from(choices(1, visual))), r.tick()]);
     let t = screen(first, 50, 5);
     assert.equal(t.row(1), right(`${joined('سیب و گلابی')} [ ] .1 ❮`, 0));
-    assert.equal(t.row(3), right(`${joined('تازه')} Blue Berry [ ] .2`, 2));
+    assert.equal(t.row(3), right(`Blue Berry ${joined('توت تازه')} [ ] .2`, 2));
     t = screen(Buffer.concat([first, r.push(Buffer.from(choices(2, visual))), r.tick()]), 50, 5);
     assert.equal(t.row(1), right(`${joined('سیب و گلابی')} [ ] .1`, 2));
-    assert.equal(t.row(3), right(`${joined('تازه')} Blue Berry [ ] .2 ❮`, 0));
+    assert.equal(t.row(3), right(`Blue Berry ${joined('توت تازه')} [ ] .2 ❮`, 0));
   }
 });
 
@@ -809,3 +810,61 @@ test('Claude Code on Windows: a number with a unit written onto it stays whole a
   assert.match(linux.row(1), / 1TB /);
   assert.equal(windows.row(1), linux.row(1));
 });
+
+const claudeShown = (s) => {
+  const cps = [...s].map((c) => c.codePointAt(0));
+  return String.fromCodePoint(...visualOrder(resolveLevels(cps, paragraphLevel(cps), { glue: false })).map((k) => cps[k]));
+};
+
+test('Claude Code on Windows: a question that starts with English and its choices read as on Linux', () => {
+  const question = 'Data Club نسخه تازه Python را هم لازم دارد، ولی این نسخه روی کامپیوترت نیست. چطور نصبش کنیم؟';
+  const ask = (visual) => {
+    const v = (s) => (visual ? claudeShown(s) : s);
+    const rows = [
+      `│ ${v(question)}`,
+      '',
+      `❯ 1. ${v('کامپیوتر کتابخانه (Recommended)')}`,
+      `     ${v('در کتابخانه شهر نصب است.')}`,
+      `  2. ${v('نسخه رایگان روی همین PC')}`,
+      `     ${v('ثبت نام با خودت، نصب با من.')}`,
+      `  3. ${v('Python بنویسد (پیشنهادی)')}`,
+      `     ${v('کد را خودش میسازد.')}`,
+      `  4. ${v('Python یا نسخه قدیمی')}`,
+      `     ${v('هر دو کار میکنند.')}`,
+    ];
+    return frame(rows.map((l, i) => `${cup(i + 1, 1)}${ESC}[2K${l}`).join('') + cup(3, 1));
+  };
+  const linux = screen(relayed([ask(false)], 110, 11), 110, 11);
+  const windows = screen(relayed([ask(true)], 110, 11, { visual: true }), 110, 11);
+  assert.match(linux.row(1), /^│ .* Data Club$/);
+  assert.match(linux.row(5), / PC .* \.2$/);
+  for (let y = 1; y <= 10; y++) assert.equal(windows.row(y), linux.row(y), `row ${y}`);
+  assert.equal(logicalText(claudeShown(question)), question);
+});
+
+test('Claude Code on Windows: a wrapped question keeps its column, and a lone tab label its checkbox', () => {
+  const first = 'این نسخه روی کامپیوترت نیست و باید اول آن را از سایت اصلی بگیری ';
+  const ask = (visual) => {
+    const v = (s) => (visual ? claudeShown(s) : s);
+    const rows = [` ${v('☐ نسخه Python')} `, '', `│ ${v(first)}`, `│ ${v('و بعد نصبش کنی. موافقی؟')}`];
+    return frame(rows.map((l, i) => `${cup(i + 1, 1)}${ESC}[2K${l}`).join(''));
+  };
+  const linux = screen(relayed([ask(false)], 70, 5), 70, 5);
+  const windows = screen(relayed([ask(true)], 70, 5, { visual: true }), 70, 5);
+  assert.match(linux.row(1), / ☐$/);
+  for (let y = 1; y <= 4; y++) assert.equal(windows.row(y), linux.row(y), `row ${y}`);
+});
+
+test('Claude Code on Windows: the answers to a question are listed as on Linux, each with its dot', () => {
+  const answers = (visual) => {
+    const v = (s) => (visual ? claudeShown(s) : s);
+    const rows = ['● User answered Claude\'s questions:', `  ⎿  ${v('· کدام نسخه را نصب کنیم؟ → نسخه رایگان روی همین PC')}`, `     ${v('· Data Club نسخه تازه Python را میخواهد؟ → بله')}`];
+    return rows.map((l, i) => `${cup(i + 1, 1)}${l}`).join('');
+  };
+  const linux = screen(relayed([answers(false)], 80, 4), 80, 4);
+  const windows = screen(relayed([answers(true)], 80, 4, { visual: true }), 80, 4);
+  assert.match(linux.row(2), / · {2}⎿$/);
+  for (let y = 1; y <= 3; y++) assert.equal(windows.row(y), linux.row(y), `row ${y}`);
+  assert.equal(logicalText(claudeShown('· Data Club نسخه تازه Python را میخواهد؟ → بله')), '· Data Club نسخه تازه Python را میخواهد؟ → بله');
+});
+

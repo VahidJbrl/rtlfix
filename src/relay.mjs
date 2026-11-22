@@ -1812,7 +1812,7 @@ export class Relay {
       if (x > a) {
         const whole = a === 0 && (x === cols || (edge && x === cols - 1));
         const cell = !whole && above && above.segs ? above.segs.find((g) => g.a === a && g.b === x) : null;
-        const inner = this.visual && !src && !whole && a > 0 && x < cols && this.scr[y] === row && this._boxed(y, a - 1, x + 1);
+        const inner = this.visual && !src && !whole && a > 0 && this.scr[y] === row && (x < cols ? this._boxed(y, a - 1, x + 1) : a === 1);
         layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : cell, whole ? below : null, cols, this.visual, this.markCells, src, this.drawn, inner, whole ? row.ctx : 0, false, whole ? keep : -1);
       }
       a = x + 1;
@@ -2031,12 +2031,22 @@ function logicalLine(line) {
   while (b > 0 && isSpace(g[b - 1])) b--;
   let a = 0;
   while (a < b && isSpace(g[a])) a++;
-  if (!isColumnRule(g[a]) || !isColumnRule(g[b - 1])) [, , a] = leadOf(g, null, 0, b, true);
+  let dot = false;
+  let marked = false;
+  if (!isColumnRule(g[a]) || !isColumnRule(g[b - 1])) {
+    const [m0, j, b0] = leadOf(g, null, 0, b, true);
+    marked = b0 > m0;
+    dot = marked && dotLead(g, m0, j);
+    a = b0;
+  }
   const [first, last] = strongEnds(g, a, b);
   if (first < 0) return line;
-  const { levels } = undoLine(g.slice(a, b).map((c) => c.codePointAt(0)), () => {
+  const cells = g.slice(a, b).map((ch) => ({ ch }));
+  const { levels } = undoLine(g.slice(a, b).map((c) => c.codePointAt(0)), (c) => {
     if (labelEnd(g, null, a, b, true) > 0) return 0;
-    if (first === 0 && last === 1 && edgeVote(g, a, 1) + edgeVote(g, b - 1, -1) < 0) return 0;
+    if (dot && first === 0) return 0;
+    if (marked && first === 0 && last === 1 && joinerFirst(cells, c[1].levels)) return 0;
+    if (first === 0 && last === 1 && edgeVote(g, a, 1) + edgeVote(g, b - 1, -1) + stopVote(g, a, b) < 0) return 0;
     return first === 1 || last === 1 ? 1 : 0;
   });
   return g.slice(0, a).join('') + visualOrder(levels).map((k) => g[a + k]).join('') + g.slice(b).join('');
@@ -2133,6 +2143,8 @@ function continues(row, x0, cols) {
   return m0 < cols && b0 === m0 && m0 >= x0 && m0 <= x0 + 2;
 }
 
+const LEADS = new Set(['\u00b7', '\u2610', '\u2612']);
+
 function edgeVote(ch, x, step) {
   while (ch[x] === '') x += step;
   const cp = ch[x].codePointAt(0);
@@ -2140,7 +2152,54 @@ function edgeVote(ch, x, step) {
   if (c === L || c === R || c === AL || c === EN || c === AN) return 0;
   const bracket = bracketType(cp);
   if (bracket) return (bracket === 1) === (step > 0) ? -1 : 1;
+  if (LEADS.has(ch[x])) return step > 0 ? -1 : 1;
   return step > 0 ? 1 : -1;
+}
+
+const RTL_STOPS = new Set([0x61b, 0x61f, 0x6d4]);
+
+function stopVote(ch, a, b) {
+  let x = b - 1;
+  while (x >= a && (ch[x] === '' || bidiClass(ch[x].codePointAt(0)) !== L)) x--;
+  let k = x + 1;
+  while (k < b && (ch[k] === '' || isSpace(ch[k]))) k++;
+  if (k > x + 1 && k + 1 < b && ch[k] === ')' && isRtlText(ch[k + 1].codePointAt(0))) return -1;
+  for (; k < b; k++) {
+    if (ch[k] === '') continue;
+    const c = bidiClass(ch[k].codePointAt(0));
+    if (c === R || c === AL) return RTL_STOPS.has(ch[k].codePointAt(0)) ? -1 : 0;
+  }
+  return 0;
+}
+
+const dotLead = (ch, m0, j) => LEADS.has(ch[j - 1]) && (j - 1 === m0 || isSpace(ch[j - 2]));
+
+const JOINERS = new Set(['\u0648', '\u06cc\u0627']);
+
+function joinerFirst(cells, levels) {
+  let word = '';
+  for (const k of visualOrder(levels)) {
+    const c = cells[k].ch;
+    if (isSpace(c)) {
+      if (word) break;
+      continue;
+    }
+    word += c;
+  }
+  return JOINERS.has(word);
+}
+
+function roomFor(row, end, cols) {
+  const ch = row.ch;
+  let a = 0;
+  while (a < cols && (ch[a] === '' || isSpace(ch[a]))) a++;
+  let b = cols;
+  while (b > a && (ch[b - 1] === '' || isSpace(ch[b - 1]))) b--;
+  let l = a;
+  while (l < b && !isSpace(ch[l])) l++;
+  let r = b;
+  while (r > l && !isSpace(ch[r - 1])) r--;
+  return a < b && end + 1 + Math.max(l - a, b - r) <= cols - 4;
 }
 
 function strongEnds(ch, b0, b1) {
@@ -2206,7 +2265,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     while (v1 > vb && isSpace(ch[v1 - 1])) v1--;
     let x0 = vb;
     let near = false;
-    if (whole && vb > v0) x0 = vj + 1;
+    if (whole && vb > v0) x0 = vj + (ch[vj - 1] === '\u23bf' ? 2 : 1);
     else if (whole && keep >= 0 && keep < vb && row.vb === vb) x0 = keep;
     else if (whole && above && above.shown && above.x0 >= 0 && vb >= above.x0) x0 = above.x0;
     else if (whole && vb > 0 && below && (startsAt(below, cols) === vb - 1 || markAt(below, cols) === vb - 1)) { x0 = vb - 1; near = true; }
@@ -2255,15 +2314,17 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
           };
           const p0 = agree(c[0].levels);
           const p1 = agree(c[1].levels);
-          if (p0 !== p1) return p0 > p1 ? 0 : 1;
+          if (p0 !== p1 && Math.max(p0, p1) > 2) return p0 > p1 ? 0 : 1;
         }
+        if (first === 0 && vb > v0 && dotLead(ch, v0, vj)) return 0;
+        if (first === 0 && last === 1 && vb > v0 && joinerFirst(cells, c[1].levels)) return 0;
         if (whole && above && above.shown && above.soft && first === 0 && last === 1) return 1;
         if (labelEnd(ch, at, vb, v1, true) > 0) return 0;
         if (first !== 0 || last !== 1 || extra) return first === 1 || last === 1 ? 1 : 0;
         open = true;
-        const vote = edgeVote(ch, vb, 1) + edgeVote(ch, v1 - 1, -1);
+        const vote = edgeVote(ch, vb, 1) + edgeVote(ch, v1 - 1, -1) + stopVote(ch, vb, v1);
         if (vote) return vote > 0 ? 1 : 0;
-        return whole && below && continues(below, x0, cols) ? 0 : 1;
+        return whole && below && continues(below, x0, cols) && !roomFor(below, v1, cols) ? 0 : 1;
       }, hint);
       if (before && vb > v0 && !pick.full) {
         let s = vj;

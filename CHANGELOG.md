@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.19 (2026-11-22)
+
+Questions with choices read right to left on Windows.
+
+- In a question that Claude Code asks with choices, a Persian question that starts with an English name and ends with «؟», such as `Data Club نسخه تازه Python را لازم دارد؟`, came out left to right on Windows, with the English name at the left and the rest of the sentence read from the wrong end. It now reads right to left, as on Linux. The same goes for the list of questions Claude Code shows after you answer them or skip them.
+- A Persian choice that ends with an English word, such as `آپلود CSV`, came out with the English word first when a description stood under the choice. Claude Code writes choices like this far more often than ones that start with English, so where nothing else tells the order of a short choice, rtlfix now reads it as starting in Persian. A choice that starts with an English word and goes on with «و» or «یا», or ends with a note in brackets, such as `Python بنویسد (پیشنهادی)`, keeps its order.
+- The label of a single question, above it, keeps its checkbox on the right.
+- The text of a long question in its frame, and the answers listed after the questions, sat one column away from where Linux puts them. They now line up.
+- rtlfix no longer turns a line around because one letter of it happened to match what the same line showed a moment before.
+- Linux and macOS draw everything exactly as before.
+
 ## 1.4.18 (2026-11-22)
 
 Dates and numbers in Persian lines keep their order on Windows.
