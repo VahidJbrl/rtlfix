@@ -119,6 +119,20 @@ test('a number between English and Persian is read back where it belongs', () =>
   }
 });
 
+test('an English date stays whole when read back, and a long number is not taken for its day', () => {
+  const lines = [
+    ['شماره سفارش E5TRK2 است، تحویل تا May 12, 2027.', 1],
+    ['نسخه جدید S3 است و پشتیبانی تا January 15, 2028.', 1],
+    ['Oak Street, Apt 12, Springfield, IL 62704. این نشانی از March 2025 ثبت شده و از آن موقع', 0],
+  ];
+  for (const [logical, pl] of lines) {
+    const visual = shown(logical, pl);
+    const back = readBack(visual, pl);
+    assert.deepEqual([back.text, back.ok], [logical, true]);
+    assert.ok(worse(readBack(visual, 1 - pl), back), logical);
+  }
+});
+
 test('a Persian line that starts with an English word leans right to left, English and code do not', () => {
   const lean = (s) => leansRtl([...s].map((c) => c.codePointAt(0)));
   for (const s of ['Python یک زبان ساده است', 'Node 18 برای Linux Mint الان Stable است.', 'VS Code ممکن است کند شود:']) assert.ok(lean(s), s);

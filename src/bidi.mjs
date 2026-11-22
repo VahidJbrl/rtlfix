@@ -477,6 +477,13 @@ function wordAt(cps, k, step) {
   return String.fromCodePoint(...out).toLowerCase();
 }
 
+function datedYear(cps, k) {
+  if (k < 5 || !GAPS.has(cps[k - 1]) || (cps[k - 2] !== 0x2c && cps[k - 2] !== 0x60c)) return false;
+  let d = k - 2;
+  while (d > 0 && k - 2 - d < 3 && isDigitCp(cps[d - 1])) d--;
+  return d < k - 2 && k - 2 - d <= 2 && d >= 2 && GAPS.has(cps[d - 1]) && MONTHS.has(wordAt(cps, d - 2, -1));
+}
+
 function numberHints(cps) {
   const n = cps.length;
   let bonus = 0;
@@ -493,8 +500,9 @@ function numberHints(cps) {
     let a = b;
     if (a < n && cps[a] === 0x2c) a++;
     const after = a + 1 < n && GAPS.has(cps[a]) ? wordAt(cps, a + 1, 1) : '';
-    if (MONTHS.has(before)) bonus += 4;
-    else if (MONTHS.has(after)) bonus += 2;
+    const day = b - k <= 2;
+    if ((MONTHS.has(before) && (day || year)) || (year && datedYear(cps, k))) bonus += 4;
+    else if (MONTHS.has(after) && day) bonus += 2;
     if (COUNT_WORDS.has(before) || (year && YEAR_WORDS.has(before))) bonus++;
     if (UNITS.has(after) || LEAD_WORDS.has(after)) bonus++;
     if (before.length > 1 && LEAD_WORDS.has(before)) bonus--;
@@ -633,7 +641,7 @@ function visualTypes(t0, cps, p, runs, flip, swappedFirst) {
   return levels;
 }
 
-function oddness(cps) {
+function oddness(cps, mixed) {
   const n = cps.length;
   let pen = n && (GAPS.has(cps[0]) || STOPS.has(cps[0])) ? 1 : 0;
   pen -= numberHints(cps);
@@ -643,6 +651,7 @@ function oddness(cps) {
     const prev = i > 0 ? cps[i - 1] : -1;
     const next = i + 1 < n ? cps[i + 1] : -1;
     if (LINKS.has(c) && scriptOf(prev) >= 0 && scriptOf(next) >= 0 && scriptOf(prev) !== scriptOf(next)) pen++;
+    if (mixed && scriptOf(prev) === R && scriptOf(c) === L) pen++;
     if (STOPS.has(c)) {
       const glued = next >= 0 && !GAPS.has(next) && !STOPS.has(next) && BRACKET_TYPE.get(next) !== CLOSE;
       if (GAPS.has(prev) && (glued || PROSE.has(c))) pen++;
@@ -688,7 +697,7 @@ function tryVisual(cps, t0, p, runs, flip, swappedFirst, hint) {
   let flips = swappedFirst === (p === 1) ? 0 : 1;
   for (const f of flip) flips += f;
   const { n: agree, full } = hint ? agreement(text, hint) : { n: 0, full: false };
-  return { levels, ok, full, pen: oddness(text), agree, kept, flips, flip, swappedFirst };
+  return { levels, ok, full, pen: oddness(text, !hint), agree, kept, flips, flip, swappedFirst };
 }
 
 const better = (a, b) => (a.ok !== b.ok ? a.ok : a.full !== b.full ? a.full : a.pen !== b.pen ? a.pen < b.pen : a.agree !== b.agree ? a.agree > b.agree : a.kept !== b.kept ? a.kept : a.flips < b.flips);

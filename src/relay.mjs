@@ -2270,7 +2270,8 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
         while (s > v0 && !isSpace(ch[s - 1])) s--;
         while (s > v0 + 1 && isSpace(ch[s - 1]) && isSpace(ch[s - 2])) s--;
         const alt = cellsOf(ch, at, s, v1, cols);
-        const other = undoLine(cpsOf(alt), () => (first === 1 || last === 1 ? 1 : 0), hintAt(s));
+        const was = hintAt(s);
+        const other = was && was.some(isRtlText) ? undoLine(cpsOf(alt), () => (first === 1 || last === 1 ? 1 : 0), was) : pick;
         if (other.full) {
           cells = alt;
           pick = other;

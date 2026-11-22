@@ -789,3 +789,23 @@ test('the spinner under a Persian side question stays in place whichever glyph i
     assert.deepEqual(seen, spins.map(([glyph, tail]) => `    ${glyph} ${tail}`), `visual ${visual}`);
   }
 });
+
+test('Claude Code on Windows: a list line that ends with an English date keeps its order, also after a frame with only its dash', () => {
+  const line = 'کد رهگیری N8QX4D است: 3 بسته، ارسال تا March 9, 2027.';
+  const shown = `.March 9, 2027${rev(' است: 3 بسته، ارسال تا ')}N8QX4D${rev('کد رهگیری ')}`;
+  const linux = screen(relayed([frame(`${cup(1, 1)}  - ${line}`)], 70, 2), 70, 2);
+  const once = screen(relayed([frame(`${cup(1, 1)}  - ${shown}`)], 70, 2, { visual: true }), 70, 2);
+  const streamed = screen(relayed([frame(`${cup(1, 1)}  -`), frame(`${cup(1, 1)}  - ${shown}`)], 70, 2, { visual: true }), 70, 2);
+  assert.match(linux.row(1), /\.March 9, 2027 .* N8QX4D .* -$/);
+  assert.equal(once.row(1), linux.row(1));
+  assert.equal(streamed.row(1), linux.row(1));
+});
+
+test('Claude Code on Windows: a number with a unit written onto it stays whole after a Persian word', () => {
+  const line = 'Server فقط 1TB به قیمت $1,299 دارد.';
+  const shown = `Server 1 ${rev('فقط')}TB ${rev('دارد')} 1,299$ ${rev('به قیمت')}.`;
+  const linux = screen(relayed([`${cup(1, 1)}  - ${line}`], 60, 2), 60, 2);
+  const windows = screen(relayed([`${cup(1, 1)}  - ${shown}`], 60, 2, { visual: true }), 60, 2);
+  assert.match(linux.row(1), / 1TB /);
+  assert.equal(windows.row(1), linux.row(1));
+});

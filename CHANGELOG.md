@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.18 (2026-11-22)
+
+Dates and numbers in Persian lines keep their order on Windows.
+
+- A Persian line that ends with an English date such as `December 6, 2026` could come out scrambled on Windows: the year sat apart from the date, next to other words, and the start of the line ended up at its far end. When rtlfix works out the order of a line Claude Code has already turned around, it now keeps a date written as month, day, comma and year together, and it no longer takes a number of three or more digits next to a month name for a day.
+- While an answer streams in, a list line can show only its `-` or `4.` for a moment. rtlfix used that moment as a reason to read the rest of the line the other way round, which could leave the whole line in the wrong order, or the next row of a wrapped item a few columns out of line. It now ignores an earlier frame that held no Persian text.
+- A number with a unit written onto it, such as `1TB`, `256GB`, `$5.5K` or `854ms`, no longer loses its unit to the Persian word in front of it on Windows.
+- Linux and macOS draw everything exactly as before.
+
 ## 1.4.17 (2026-11-22)
 
 The status line under a Persian side question no longer jumps from side to side.
