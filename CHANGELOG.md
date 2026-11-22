@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.16 (2026-11-21)
+
+A Persian command title no longer shifts while the command runs.
+
+- On Windows, while Claude Code runs a command with a Persian description in fullscreen mode, the bullet in front of the description blinks. Each time the bullet went out, the description moved one column to the left, and back when it came on again. It now stays in place, the same as on Linux and macOS.
+
 ## 1.4.15 (2026-11-21)
 
 The choices in Claude Code's questions stay in place.

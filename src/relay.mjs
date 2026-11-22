@@ -161,6 +161,7 @@ class Row {
     this.segs = null;
     this.seen = -1;
     this.prior = null;
+    this.was = null;
   }
 
   resize(cols, keep = false) {
@@ -193,6 +194,7 @@ class Row {
     this.lch = null;
     this.segs = null;
     this.prior = null;
+    this.was = null;
   }
 }
 
@@ -1796,6 +1798,8 @@ export class Relay {
     const cursorX = this.y === y && this.scr[this.y] === row ? this.x : -1;
     let a = 0;
     const below = this.visual && this.scr[y] === row && y + 1 < this.rows ? this.scr[y + 1] : null;
+    const keep = this.visual && row.was && row.was.length === cols && row.x0 > 0 && lettersOf(row.was) === lettersOf(row.ch) ? row.x0 : -1;
+    row.was = this.visual ? row.ch.slice() : null;
     row.dir = 0;
     row.b0 = -1;
     row.x0 = -1;
@@ -1809,7 +1813,7 @@ export class Relay {
         const whole = a === 0 && (x === cols || (edge && x === cols - 1));
         const cell = !whole && above && above.segs ? above.segs.find((g) => g.a === a && g.b === x) : null;
         const inner = this.visual && !src && !whole && a > 0 && x < cols && this.scr[y] === row && this._boxed(y, a - 1, x + 1);
-        layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : cell, whole ? below : null, cols, this.visual, this.markCells, src, this.drawn, inner, whole ? row.ctx : 0);
+        layoutSegment(row, a, x, whole, dch, dat, maps, cursorX, whole ? above : cell, whole ? below : null, cols, this.visual, this.markCells, src, this.drawn, inner, whole ? row.ctx : 0, false, whole ? keep : -1);
       }
       a = x + 1;
     }
@@ -1977,6 +1981,12 @@ function chipSource(ch, at, cols, chips) {
   return { ch: nch, at: nat, org };
 }
 
+function lettersOf(ch) {
+  let s = '';
+  for (let x = 1; x < ch.length; x++) if (ch[x] !== '' && isRtlText(ch[x].codePointAt(0))) s += ch[x];
+  return s;
+}
+
 function hasRtlText(ch, a, b) {
   for (let x = a; x < b; x++) if (ch[x] !== '' && isRtlText(ch[x].codePointAt(0))) return true;
   return false;
@@ -2111,6 +2121,11 @@ function startsAt(row, cols) {
   return m0 < cols && b0 === m0 ? m0 : -1;
 }
 
+function markAt(row, cols) {
+  const [m0, , b0] = leadOf(row.ch, row.at, 0, cols, true);
+  return m0 < cols && b0 > m0 ? m0 : -1;
+}
+
 function continues(row, x0, cols) {
   const [m0, , b0] = leadOf(row.ch, row.at, 0, cols, true);
   return m0 < cols && b0 === m0 && m0 >= x0 && m0 <= x0 + 2;
@@ -2170,7 +2185,7 @@ function toLogical(ch, at, b0, cells, levels, cols) {
   return [nch, nat, org];
 }
 
-function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false, src = null, epoch = -2, inner = false, ctx = 0, tight = false) {
+function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, cols, visual = false, markCells = false, src = null, epoch = -2, inner = false, ctx = 0, tight = false, keep = -1) {
   const { cmap, vmap, lmap, lch } = maps;
   let ch = src ? src.ch : row.ch;
   let at = src ? src.at : row.at;
@@ -2190,8 +2205,9 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
     let x0 = vb;
     let near = false;
     if (whole && vb > v0) x0 = vj + 1;
+    else if (whole && keep >= 0 && keep < vb && row.vb === vb) x0 = keep;
     else if (whole && above && above.shown && above.x0 >= 0 && vb >= above.x0) x0 = above.x0;
-    else if (whole && vb > 0 && below && startsAt(below, cols) === vb - 1) { x0 = vb - 1; near = true; }
+    else if (whole && vb > 0 && below && (startsAt(below, cols) === vb - 1 || markAt(below, cols) === vb - 1)) { x0 = vb - 1; near = true; }
     else if (inner && v0 > a + 1 && isSpace(ch[a])) x0 = a + 1;
     let extra = vb > x0;
     const [first, last] = strongEnds(ch, vb, v1);
@@ -2272,7 +2288,7 @@ function layoutSegment(row, a, b, whole, dch, dat, maps, cursorX, above, below, 
       b1 = b;
       while (b1 > b0 && blankCell(ch[b1 - 1], at[b1 - 1])) b1--;
     }
-    if (whole) { row.x0 = x0; row.dep = open || near; row.soft = level === 1 && extra; }
+    if (whole) { row.x0 = x0; row.vb = vb; row.dep = open || near; row.soft = level === 1 && extra; }
   }
   for (let x = a; x < b; x++) lch[x] = ch[x];
   if (cursorX > b1 && cursorX < b) b1 = cursorX;

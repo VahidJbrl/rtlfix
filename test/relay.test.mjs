@@ -753,3 +753,18 @@ test('a list typed into the prompt keeps the direction of each line', () => {
   const t = screen(relayed([lines.map((l, i) => cup(i + 1, 1) + l).join('') + cup(3, 17)], 40, 5), 40, 5);
   assert.equal(t.row(3), '  2. hello world');
 });
+
+test('Claude Code on Windows: a running tool line keeps its place while its bullet blinks', () => {
+  const text = 'بررسی تنظیمات برنامه';
+  for (const below of [true, false]) {
+    const r = new Relay({ cols: 40, rows: 4, visual: true });
+    const out = [];
+    const steps = below ? [[false, ''], [true, ''], [false, '2s · '], [true, '3s · '], [false, '3s · ']] : [[true, ''], [false, ''], [true, '2s · '], [false, '3s · ']];
+    const ends = steps.map(([on, tail]) => {
+      const rows = `${cup(1, 1)}${ESC}[2K${on ? '●' : ' '}  ${tail}${rev(text)}` + (below ? `${cup(2, 1)}${ESC}[2K  ⎿  $ sleep 15` : '');
+      out.push(r.push(Buffer.from(frame(rows))), r.tick());
+      return screen(Buffer.concat(out), 40, 4).row(1).replace(/ ●$/, '').length;
+    });
+    assert.deepEqual(ends, steps.map(() => 38), `below ${below}`);
+  }
+});
