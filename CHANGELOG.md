@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.17 (2026-11-22)
+
+The status line under a Persian side question no longer jumps from side to side.
+
+- While Claude Code answers a question asked with `/btw` in Persian, the `Answering…` line under it moved to the right edge and back several times a second. The spinning sign at the start of that line is sometimes a `*`, and rtlfix took the line for an English item in a Persian list, which since 1.4.13 follows the list to the right. rtlfix now tells Claude Code's status lines apart from list items, so the line stays on the left. The same holds for the line Claude Code shows while it retries a request, on Linux, macOS and Windows.
+
 ## 1.4.16 (2026-11-21)
 
 A Persian command title no longer shifts while the command runs.

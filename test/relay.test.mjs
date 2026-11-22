@@ -768,3 +768,24 @@ test('Claude Code on Windows: a running tool line keeps its place while its bull
     assert.deepEqual(ends, steps.map(() => 38), `below ${below}`);
   }
 });
+
+test('the spinner under a Persian side question stays in place whichever glyph it shows', () => {
+  const question = 'کدام کتاب برای شروع بهتر است؟';
+  const spins = [
+    ['\u00b7', 'Answering\u2026'],
+    ['\u2722', 'Answering\u2026'],
+    ['*', 'Answering\u2026'],
+    ['\u2736', 'Answering\u2026'],
+    ['*', 'API overloaded \u00b7 retrying in 5s \u00b7 attempt 2/10'],
+  ];
+  for (const visual of [false, true]) {
+    const r = new Relay({ cols: 60, rows: 7, visual });
+    const out = [];
+    const seen = spins.map(([glyph, tail]) => {
+      const rows = ['\u2594'.repeat(60), `  /btw ${visual ? rev(question) : question}`, '', `    ${glyph} ${tail}`, '', '  Esc to close'];
+      out.push(r.push(Buffer.from(frame(rows.map((l, i) => `${cup(i + 1, 1)}${ESC}[2K${l}`).join('')))), r.tick());
+      return screen(Buffer.concat(out), 60, 7).row(4);
+    });
+    assert.deepEqual(seen, spins.map(([glyph, tail]) => `    ${glyph} ${tail}`), `visual ${visual}`);
+  }
+});

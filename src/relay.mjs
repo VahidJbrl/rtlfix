@@ -1854,6 +1854,7 @@ const rowDir = (row) => (row.shown && row.dir === 1 ? 1 : 0);
 const textOf = (row) => (row.shown && !row.dirty && row.lch && row.lch.length === row.ch.length ? row.lch : row.ch);
 
 const LIST_MARK = /^(?:[-*+\u2022\u25e6\u25aa\u2023\u2043]|\d{1,4}[.)]|[a-z][.)]|[ivxl]{2,6}[.)])$/;
+const SPIN_WORD = /^\p{Lu}/u;
 const QUOTES = new Set([0x22, 0xab, 0xbb, 0x201c, 0x201d]);
 const ARABIC_SIGNS = new Set([0x60c, 0x61b, 0x61f]);
 const BULLETS = new Set(['\u25cf', '\u23fa', '\u2726']);
@@ -1887,7 +1888,8 @@ function rowInfo(ch) {
   }
   if (!toks.length) return BLANK_ROW;
   const end = toks[toks.length - 1].e;
-  const p = toks.length > 1 && [...toks[0].s].length === 1 && isMarker(toks[0].s.codePointAt(0)) && !LIST_MARK.test(toks[0].s) ? 1 : 0;
+  const spin = toks.length > 1 && toks[0].s === '*' && !rtl && SPIN_WORD.test(toks[1].s) && toks.some((t) => t.s.includes('\u2026') || t.s === '\u00b7');
+  const p = toks.length > 1 && [...toks[0].s].length === 1 && isMarker(toks[0].s.codePointAt(0)) && (spin || !LIST_MARK.test(toks[0].s)) ? 1 : 0;
   const pointed = p === 1 && toks.length > 2 && LIST_MARK.test(toks[1].s) && !BULLETS.has(toks[0].s);
   const head = p === 1 && toks[0].x === 0 && !pointed;
   const lead = head && !BULLETS.has(toks[0].s);
