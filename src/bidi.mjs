@@ -455,12 +455,13 @@ const MONTHS = words('january february march april may june july august septembe
   'jan feb mar apr jun jul aug sep sept oct nov dec ' +
   '\u0641\u0631\u0648\u0631\u062f\u06cc\u0646 \u0627\u0631\u062f\u06cc\u0628\u0647\u0634\u062a \u062e\u0631\u062f\u0627\u062f \u062a\u06cc\u0631 \u0645\u0631\u062f\u0627\u062f \u0634\u0647\u0631\u06cc\u0648\u0631 ' +
   '\u0645\u0647\u0631 \u0622\u0628\u0627\u0646 \u0622\u0630\u0631 \u062f\u06cc \u0628\u0647\u0645\u0646 \u0627\u0633\u0641\u0646\u062f');
-const COUNT_WORDS = words('\u062d\u062f\u0648\u062f \u062a\u0627 \u0628\u06cc\u0646 \u0637\u06cc \u062d\u062f\u0627\u0642\u0644 \u062d\u062f\u0627\u06a9\u062b\u0631 \u0633\u0627\u0644 \u0622\u062f\u0631\u0633');
+const COUNT_WORDS = words('\u062d\u062f\u0648\u062f \u062a\u0627 \u0628\u06cc\u0646 \u0637\u06cc \u062d\u062f\u0627\u0642\u0644 \u062d\u062f\u0627\u06a9\u062b\u0631 \u0633\u0627\u0644 \u0633\u0627\u0639\u062a \u0622\u062f\u0631\u0633');
 const LEAD_WORDS = words('n s e w ne nw se sw am pm gb mb kb tb km kg ms kib mib gib tib bits bytes kbps mbps gbps ' +
   'hz khz mhz ghz secs hrs hours days weeks months years est edt cst cdt mst mdt pst pdt utc gmt mm cm ft yd mph fps rpm ' +
   'mg oz lb lbs ml gal px dpi kw kwh mah');
 const YEAR_WORDS = words('\u062f\u0631 \u0627\u0632 \u0628\u0647 \u0628\u0627 \u0628\u0631\u0627\u06cc');
 const UNITS = words('\u0631\u0627 \u0631\u0648\u0632 \u0633\u0627\u0644 \u0645\u0627\u0647 \u0647\u0641\u062a\u0647 \u0633\u0627\u0639\u062a \u062f\u0642\u06cc\u0642\u0647 \u0633\u0647\u0645 \u0646\u0641\u0631 \u0628\u0627\u0631 \u062f\u0631\u0635\u062f \u062f\u0644\u0627\u0631 \u062a\u0648\u0645\u0627\u0646 \u0647\u0632\u0627\u0631 \u0645\u06cc\u0644\u06cc\u0648\u0646');
+const HOUR = '\u0633\u0627\u0639\u062a';
 const scriptOf = (cp) => {
   if (cp < 0) return -1;
   const c = bidiClass(cp);
@@ -491,8 +492,10 @@ function numberHints(cps) {
     if (!isDigitCp(cps[k]) || (k > 0 && isDigitCp(cps[k - 1]))) continue;
     let b = k + 1;
     let dotted = false;
+    let timed = false;
     while (b < n && (isDigitCp(cps[b]) || (STOPS.has(cps[b]) && b + 1 < n && isDigitCp(cps[b + 1])))) {
       if (cps[b] === 0x2e) dotted = true;
+      if (cps[b] === 0x3a) timed = true;
       b++;
     }
     const year = b - k === 4 && (cps[k] === 0x31 || cps[k] === 0x32);
@@ -504,7 +507,7 @@ function numberHints(cps) {
     if ((MONTHS.has(before) && (day || year)) || (year && datedYear(cps, k))) bonus += 4;
     else if (MONTHS.has(after) && day) bonus += 2;
     if (COUNT_WORDS.has(before) || (year && YEAR_WORDS.has(before))) bonus++;
-    if (UNITS.has(after) || LEAD_WORDS.has(after)) bonus++;
+    if ((UNITS.has(after) && !(timed && after === HOUR)) || LEAD_WORDS.has(after)) bonus++;
     if (before.length > 1 && LEAD_WORDS.has(before)) bonus--;
     if (dotted && before && scriptOf(before.codePointAt(0)) === L && !LEAD_WORDS.has(before)) bonus++;
     k = b - 1;

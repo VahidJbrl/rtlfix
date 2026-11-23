@@ -868,3 +868,17 @@ test('Claude Code on Windows: the answers to a question are listed as on Linux, 
   assert.equal(logicalText(claudeShown('· Data Club نسخه تازه Python را میخواهد؟ → بله')), '· Data Club نسخه تازه Python را میخواهد؟ → بله');
 });
 
+
+test('Claude Code on Windows: a time after the word for hour stays with it', () => {
+  const cases = [
+    ['Review را بگذار روی Mon Jan 12، 3:00 PM. ساعت 2:00 PM زود است.', `${joined('زود است')} 2:00 PM ${joined('ساعت')} .Mon Jan 12، 3:00 PM`],
+    ['Train ساعت 10:15 AM حرکت کرد و ساعت 2:40 PM رسید.', `.${joined('رسید')} 2:40 PM ${joined('ساعت')} ${joined('حرکت کرد و')} 10:15 AM ${joined('ساعت')} Train`],
+    ['Report: نتیجه حدود ساعت 5.', `.5 ${joined('نتیجه حدود ساعت')} :Report`],
+  ];
+  for (const [text, part] of cases) {
+    const linux = screen(relayed([`${cup(1, 1)}  - ${text}`], 80, 2), 80, 2);
+    const windows = screen(relayed([`${cup(1, 1)}  - ${claudeShown(text)}`], 80, 2, { visual: true }), 80, 2);
+    assert.ok(linux.row(1).includes(part), linux.row(1));
+    assert.equal(windows.row(1), linux.row(1));
+  }
+});

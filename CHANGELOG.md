@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.20 (2026-11-22)
+
+Times after «ساعت» stay in place on Windows.
+
+- On Windows, a time that follows the Persian word «ساعت», such as `ساعت 2:00 PM`, could be drawn on the far side of that word, next to the English words before it. In `Review را بگذار روی Mon Jan 12، 3:00 PM. ساعت 2:00 PM زود است.` the time `2:00` sat right after `3:00 PM.`, so the line seemed to name two times for the same thing, and `ساعت PM` stood alone. rtlfix now takes «ساعت» before a number as the start of a time, as it already did for «سال» before a year, and no longer reads a clock time such as `2:00` followed by «ساعت» as a number of hours. A plain hour at the end of a sentence, as in `نتیجه حدود ساعت 5.`, also stays after «ساعت».
+- Linux and macOS draw everything exactly as before.
+
 ## 1.4.19 (2026-11-22)
 
 Questions with choices read right to left on Windows.
